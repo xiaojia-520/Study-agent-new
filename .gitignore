@@ -1,60 +1,102 @@
-# ======================
-# Python
-# ======================
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# 虚拟环境
-venv/
-.env/
-.venv/
-
-# ======================
-# IDE / 编辑器
-# ======================
-.idea/
-.vscode/
-
-# ======================
-# 项目运行产生的数据
-# ======================
-logs/
-data/
-models/
-
-# 如果你将来希望保留空目录结构，可用：
-# data/.gitkeep
-# models/.gitkeep
-
-# ======================
-# 缓存目录（递归忽略）
-# ======================
-**/__pycache__/
-
-# ======================
-# 配置中的缓存
-# ======================
-config/__pycache__/
-
-# ======================
-# Windows 系统文件
-# ======================
+############################
+# OS / Windows
+############################
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+*.lnk
 
-# ======================
-# 临时文件
-# ======================
+############################
+# macOS（你项目里出现了.DS_Store）
+############################
+.DS_Store
+
+############################
+# Python cache / compiled
+############################
+__pycache__/
+*.py[cod]
+*$py.class
+
+############################
+# Python virtual env
+############################
+.venv/
+venv/
+env/
+ENV/
+
+############################
+# Build / dist
+############################
+build/
+dist/
+*.egg-info/
+
+############################
+# Logs / runtime output
+############################
+logs/
 *.log
-*.tmp
-*.swp
-*.bak
+
+############################
+# Runtime outputs
+############################
+output.srt
+data/transcripts/
+tests/uploads/
+
+############################
+# Env / secrets
+############################
+config/.env
+.env
+
+############################
+# IDE - JetBrains / PyCharm
+############################
+.idea/
+*.iml
+
+############################
+# Node (你有 package-lock.json)
+############################
+node_modules/
+
+############################
+# Models (大型模型文件建议不要入库)
+############################
+models/
+
+# 如果你希望保留 models 目录结构，但不提交模型权重：
+# models/**/*
+# !models/**/.gitattributes
+# !models/**/README.md
+# !models/**/requirements.txt
+# !models/**/config.yaml
+# !models/**/configuration.json
+# !models/**/tokens.json
+# !models/**/tokens.txt
+# !models/**/vocab.txt
+# !models/**/special_tokens_map.json
+# !models/**/tokenizer.json
+# !models/**/tokenizer_config.json
+# !models/**/config.json
+# !models/**/modules.json
+
+############################
+# Large model weights (保险)
+############################
+*.pt
+*.bin
+*.safetensors
+*.mvn
+*.mdl
+
+############################
+# Testing caches
+############################
+.pytest_cache/
+.mypy_cache/
+.cache/

@@ -31,9 +31,17 @@ class Settings(BaseSettings):
     VAD_THRESHOLD: float = 0.3  # VAD 语音检测阈值（0-1，值越高越严格）
     AUDIO_DEVICE: int = 1
 
+    VEDIO_PATH: Path = DATA_DIR / "vedio"
+
+    print(VEDIO_PATH)
+
     # ===== ✅ ASR配置【核心修改：BASE_DIR拼接本地模型路径】=====
     # 写法1：本地已下载好模型 → 直接指向模型文件夹（推荐，优先用这个）
-    ASR_MODEL_NAME: str = str(Path(BASE_DIR / "models" / "asr" / "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online"))
+    ASR_MODEL_PATH: dict = {
+        "funasr-offline" : "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        "funasr-online" : "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online"
+    }
+    ASR_MODEL_NAME: str = str(Path(BASE_DIR / "models" / "asr" / ASR_MODEL_PATH['funasr-offline']))
     ASR_USE_OFFLINE: bool = True
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR
 
