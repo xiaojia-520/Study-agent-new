@@ -82,12 +82,23 @@ class _ASRDriverBase:
 
 
 class _OnlineASRDriver(_ASRDriverBase):
-    def __init__(self, asr: ASRTranscriber, buf: _ChunkFIFO, stride: int, tail_keep: int, partial_log_interval: float):
+    def __init__(
+            self,
+            asr: ASRTranscriber,
+            buf: _ChunkFIFO,
+            stride: int,
+            tail_keep: int,
+            partial_log_interval: float,
+            on_partial=None,
+            on_final=None,
+    ):
         self.asr = asr
         self.buf = buf
         self.stride = stride
         self.tail_keep = tail_keep
         self.partial_log_interval = partial_log_interval
+        self.on_partial = on_partial
+        self.on_final = on_final
 
         self._last_partial_text = ""
         self._last_partial_ts = 0.0
@@ -107,10 +118,16 @@ class _OnlineASRDriver(_ASRDriverBase):
 
             if partial_text:
                 now = time.monotonic()
-                if (partial_text != self._last_partial_text) and (now - self._last_partial_ts >= self.partial_log_interval):
+                if (partial_text != self._last_partial_text) and (
+                        now - self._last_partial_ts >= self.partial_log_interval):
                     logger.info(f"ASR(partial): {partial_text}")
                     self._last_partial_text = partial_text
                     self._last_partial_ts = now
+                    if self.on_partial:
+                        try:
+                            self.on_partial(partial_text)
+                        except Exception as exc:
+                            logger.error(f"partial 回调失败: {exc}")
 
     def on_end(self):
         remaining = self.buf.pop_all()
@@ -118,14 +135,20 @@ class _OnlineASRDriver(_ASRDriverBase):
             final_text = self.asr.transcribe_stream(remaining, is_final=True)
             if final_text:
                 logger.info(f"ASR(final): {final_text}")
+                if self.on_final:
+                    try:
+                        self.on_final(final_text)
+                    except Exception as exc:
+                        logger.error(f"final 回调失败: {exc}")
         self.buf.clear()
         logger.info("VAD end -> 停止喂 ASR (online)")
 
 
 class _OfflineASRDriver(_ASRDriverBase):
-    def __init__(self, asr: ASRTranscriber, buf: _ChunkFIFO):
+    def __init__(self, asr: ASRTranscriber, buf: _ChunkFIFO, on_final=None):
         self.asr = asr
         self.buf = buf
+        self.on_final = on_final
 
     def on_start(self):
         self.buf.clear()
@@ -141,6 +164,11 @@ class _OfflineASRDriver(_ASRDriverBase):
                 offline_res = self.asr.transcribe_offline(seg_audio)
                 if offline_res:
                     logger.info(f"ASR(offline): {offline_res}")
+                    if self.on_final:
+                        try:
+                            self.on_final(offline_res)
+                        except Exception as exc:
+                            logger.error(f"final 回调失败: {exc}")
             except Exception as e:
                 logger.error(f"离线ASR失败: {e}")
         self.buf.clear()
@@ -174,7 +202,7 @@ class SpeechPipeline:
         self.partial_log_interval = 0.25
 
         # buffers
-        self._buf = _ChunkFIFO()      # online
+        self._buf = _ChunkFIFO()  # online
         self._seg_buf = _ChunkFIFO()  # offline
 
         # 热切配置锁
@@ -236,7 +264,8 @@ class SpeechPipeline:
             self.asr = ASRTranscriber()
             self._driver = self._build_driver()
 
-        logger.info(f"ASR 模型已切换: key={key_or_folder}, offline={settings.ASR_USE_OFFLINE}, path={settings.ASR_MODEL_NAME}")
+        logger.info(
+            f"ASR 模型已切换: key={key_or_folder}, offline={settings.ASR_USE_OFFLINE}, path={settings.ASR_MODEL_NAME}")
 
     # ---------------------------
     # helpers
@@ -349,6 +378,165 @@ class SpeechPipeline:
             end_now = False
 
             # 读一次 driver（避免切模型时半句不一致）
+            with self._cfg_lock:
+                driver = self._driver
+
+            if isinstance(event, dict):
+                if "start" in event:
+                    self._in_speech = True
+                    driver.on_start()
+                if "end" in event:
+                    end_now = True
+
+            if not self._in_speech:
+                continue
+
+            driver.on_chunk(chunk)
+
+            if end_now:
+                driver.on_end()
+                self._in_speech = False
+
+
+class WebSpeechPipeline:
+    """WebSocket 语音流处理：接收外部音频帧，输出实时/最终文本。"""
+
+    def __init__(self, on_partial=None, on_final=None):
+        self.vad = VADProcessor()
+        self.slicer = FrameSlicer(window_size=512)
+
+        self.q = queue.Queue(maxsize=2000)
+        self._stop_event = threading.Event()
+        self._worker = threading.Thread(target=self._asr_worker_loop, daemon=True)
+
+        self._in_speech = False
+        self._cb_in_speech = False
+
+        self.chunk_size = [0, 10, 5]
+        self.asr_stride = self.chunk_size[1] * 960
+        self.tail_keep = int(0.35 * self.asr_stride)
+        self.partial_log_interval = 0.25
+
+        self._buf = _ChunkFIFO()
+        self._seg_buf = _ChunkFIFO()
+
+        self._cfg_lock = threading.Lock()
+
+        self.asr = ASRTranscriber()
+        self.on_partial = on_partial
+        self.on_final = on_final
+        self._driver = self._build_driver()
+
+    def start(self):
+        self._stop_event.clear()
+        if not self._worker.is_alive():
+            self._worker = threading.Thread(target=self._asr_worker_loop, daemon=True)
+            self._worker.start()
+        logger.info("WebSpeechPipeline 已启动")
+
+    def stop(self):
+        self._stop_event.set()
+        try:
+            self.q.put_nowait(None)
+        except queue.Full:
+            pass
+
+        if self._worker.is_alive():
+            self._worker.join(timeout=2.0)
+        logger.info("WebSpeechPipeline 已停止")
+
+    def feed_audio_bytes(self, audio_bytes: bytes):
+        if not audio_bytes:
+            return
+        audio = np.frombuffer(audio_bytes, dtype=np.float32)
+        self.feed_audio(audio)
+
+    def feed_audio(self, audio: np.ndarray):
+        if audio is None or audio.size == 0:
+            return
+
+        chunks = self.slicer.push(audio)
+
+        for chunk in chunks:
+            event = self.vad.process_frame(chunk)
+
+            if isinstance(event, dict):
+                if "start" in event:
+                    self._cb_in_speech = True
+
+                self._put_nonblocking((event, chunk), critical=True)
+
+                if "end" in event:
+                    self._cb_in_speech = False
+            else:
+                if self._cb_in_speech:
+                    self._put_nonblocking((None, chunk), critical=False)
+
+    def _build_driver(self) -> _ASRDriverBase:
+        if settings.ASR_USE_OFFLINE:
+            return _OfflineASRDriver(asr=self.asr, buf=self._seg_buf, on_final=self.on_final)
+        return _OnlineASRDriver(
+            asr=self.asr,
+            buf=self._buf,
+            stride=self.asr_stride,
+            tail_keep=self.tail_keep,
+            partial_log_interval=self.partial_log_interval,
+            on_partial=self.on_partial,
+            on_final=self.on_final,
+        )
+
+    @staticmethod
+    def _resolve_model_folder(key_or_folder: str) -> str:
+        mp = getattr(settings, "ASR_MODEL_PATH", None)
+        if isinstance(mp, dict) and key_or_folder in mp:
+            return mp[key_or_folder]
+        return key_or_folder
+
+    @staticmethod
+    def _infer_offline(key: str, folder: str) -> bool:
+        k = (key or "").lower()
+        f = (folder or "").lower()
+        if k in ("funasr-offline", "offline"):
+            return True
+        if k in ("funasr-online", "online"):
+            return False
+        if "online" in f:
+            return False
+        return True
+
+    def _drain_queue(self):
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
+
+    def _put_nonblocking(self, item, critical: bool = False) -> bool:
+        try:
+            self.q.put_nowait(item)
+            return True
+        except queue.Full:
+            if not critical:
+                return False
+            try:
+                self.q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.q.put_nowait(item)
+                return True
+            except queue.Full:
+                return False
+
+    def _asr_worker_loop(self):
+        while not self._stop_event.is_set():
+            item = self.q.get()
+            if item is None:
+                break
+
+            event, chunk = item
+            end_now = False
+
             with self._cfg_lock:
                 driver = self._driver
 
