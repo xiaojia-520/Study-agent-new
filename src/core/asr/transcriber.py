@@ -42,10 +42,15 @@ class ASRTranscriber:
         )
         return res[0].get("text", "") if res else ""
 
-    def transcribe(self, audio: str | Path) -> str:
-        res = self.asr_model.generate(
 
+class VEDIOTranscriber:
+    def __init__(self):
+        self.funasr_model = model_hub.load_funasr_model()
+
+    def transcribe(self, audio: str | Path) -> str:
+        res = self.funasr_model.generate(
             input=audio,
-            batch_size_s=300
+            batch_size_s=300,  # ↓ 降这个通常最有效
+            vad_kwargs={"max_single_segment_time": 60000},  # 30s 一段上限（按需改）
         )
-        return res[0].get("text", "") if res else ""
+        return res[0]["sentence_info"]

@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     ASR_USE_OFFLINE: bool = True
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR
 
+    VAD_MODEL_NAME: str = str(Path(BASE_DIR / "models" / "vad" / "speech_fsmn_vad_zh-cn-16k-common-pytorch"))
+
+    PUNC_MODEL_NAME: str = str(Path(BASE_DIR / "models" / "punc" / "punc_ct-transformer_cn-en-common-vocab471067-large"))
+
+
     # ===== ✅ 向量模型配置【同样支持BASE_DIR拼接】=====
     EMBED_MODEL_NAME: Path = BASE_DIR / "models" / "embedding" / "bge-small-zh-v1.5"
     VECTOR_DIM: int = 384

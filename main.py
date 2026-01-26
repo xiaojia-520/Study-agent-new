@@ -34,26 +34,32 @@
 #
 # print("✅ 已生成 output.srt")
 
-from src.application.speech_pipeline import SpeechPipeline
+# from src.application.speech_pipeline import SpeechPipeline
+#
+# import time
+# def main():
+#     pipeline = SpeechPipeline()
+#
+#     try:
+#         pipeline.start()
+#         print("🎙️ SpeechPipeline 已启动，开始说话吧！（Ctrl+C 停止）")
+#
+#         while True:
+#             time.sleep(0.2)
+#
+#     except KeyboardInterrupt:
+#         print("\n🛑 正在停止 SpeechPipeline...")
+#
+#     finally:
+#         pipeline.stop()
+#         print("✅ 已停止")
+#
+#
+# if __name__ == "__main__":
+#     main()
 
-import time
-def main():
-    pipeline = SpeechPipeline()
 
-    try:
-        pipeline.start()
-        print("🎙️ SpeechPipeline 已启动，开始说话吧！（Ctrl+C 停止）")
+from src.application.vedio_transcriber import VedioTranscriber
 
-        while True:
-            time.sleep(0.2)
-
-    except KeyboardInterrupt:
-        print("\n🛑 正在停止 SpeechPipeline...")
-
-    finally:
-        pipeline.stop()
-        print("✅ 已停止")
-
-
-if __name__ == "__main__":
-    main()
+vt = VedioTranscriber()
+vt.start(r"E:\Study-agent-new-master\models\asr\SenseVoiceSmall\example\zh.mp3")

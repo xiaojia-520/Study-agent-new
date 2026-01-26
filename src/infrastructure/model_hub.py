@@ -16,6 +16,9 @@ class ModelHub:
     _embed_model = None
     _vad_model = None
 
+    def __init__(self):
+        self.funasr_model = None
+
     def __new__(cls):
         # 单例模式，避免重复加载模型占用内存
         if cls._instance is None:
@@ -45,6 +48,15 @@ class ModelHub:
             self._vad_model = load_silero_vad()
             logger.info("VAD模型加载完成")
         return self._vad_model
+    
+    def load_funasr_model(self):
+        self.funasr_model = AutoModel(
+            model=settings.ASR_MODEL_NAME,
+            vad_model=settings.VAD_MODEL_NAME,
+            punc_model=settings.PUNC_MODEL_NAME,
+            sentence_timestamp=True,
+        )
+        return self.funasr_model
 
 
 # 全局单例模型仓储
