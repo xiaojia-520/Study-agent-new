@@ -1,0 +1,1 @@
+"""VAD service abstraction."""

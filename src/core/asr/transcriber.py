@@ -7,8 +7,8 @@ logger = get_logger("ASRTranscriber")
 
 
 class ASRTranscriber:
-    def __init__(self):
-        self.asr_model = model_hub.load_asr_model()
+    def __init__(self, model_name: str | None = None):
+        self.asr_model = model_hub.load_asr_model(model_name=model_name)
         logger.info("语音转写器初始化完成")
 
         # ✅ 流式相关：一句话内复用
