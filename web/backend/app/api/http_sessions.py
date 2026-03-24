@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from src.core.asr.realtime_models import resolve_realtime_asr_model
 from web.backend.app.services.session_manager import session_manager
+from web.backend.app.services.transcript_service import transcript_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -65,4 +66,15 @@ async def list_sessions():
             }
             for session in sessions
         ]
+    }
+
+
+@router.get("/{session_id}/transcripts")
+async def get_session_transcripts(session_id: str):
+    session = session_manager.get_session(session_id)
+    items = transcript_service.list_session_transcripts(session, session_id)
+    return {
+        "session_id": session_id,
+        "count": len(items),
+        "items": items,
     }

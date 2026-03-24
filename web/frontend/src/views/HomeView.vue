@@ -141,6 +141,22 @@
         </dl>
       </article>
 
+      <article class="panel transcript">
+        <div class="panel-head">
+          <h2>Persisted</h2>
+          <button class="button ghost" @click="fetchPersistedTranscripts" :disabled="loadingPersisted || !sessionId">
+            {{ loadingPersisted ? 'Loading...' : 'Refresh' }}
+          </button>
+        </div>
+        <ul v-if="persistedTranscripts.length" class="final-list">
+          <li v-for="item in persistedTranscripts" :key="item.chunk_id">
+            <span class="seq">#{{ item.chunk_id }}</span>
+            <span>{{ item.clean_text || item.text }}</span>
+          </li>
+        </ul>
+        <p v-else>{{ sessionId ? 'No persisted transcripts yet.' : 'Create a session first.' }}</p>
+      </article>
+
       <article class="panel events">
         <div class="panel-head">
           <h2>事件流</h2>
@@ -187,6 +203,12 @@ type InputDeviceOption = {
   label: string
 }
 
+type PersistedTranscriptItem = {
+  chunk_id: number
+  text: string
+  clean_text: string
+}
+
 type ModelOption = {
   value: string
   label: string
@@ -216,6 +238,8 @@ const loadingDevices = ref(false)
 const audioMetrics = ref<{ rms?: string; peak?: string }>({})
 const inputDevices = ref<InputDeviceOption[]>([])
 const selectedInputDeviceId = ref('')
+const persistedTranscripts = ref<PersistedTranscriptItem[]>([])
+const loadingPersisted = ref(false)
 
 let websocket: WebSocket | null = null
 let mediaStream: MediaStream | null = null
@@ -309,11 +333,35 @@ async function createSession() {
     const data = (await response.json()) as { session_id: string; model_name?: string | null }
     sessionId.value = data.session_id
     currentModelName.value = data.model_name ?? ''
+    persistedTranscripts.value = []
     pushEvent({ type: 'session_created', ...data })
+    await fetchPersistedTranscripts()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'create session failed'
   } finally {
     creatingSession.value = false
+  }
+}
+
+async function fetchPersistedTranscripts() {
+  if (!sessionId.value) {
+    persistedTranscripts.value = []
+    return
+  }
+
+  loadingPersisted.value = true
+  try {
+    const response = await fetch(`${backendHttpUrl.value}/sessions/${sessionId.value}/transcripts`)
+    if (!response.ok) {
+      throw new Error(`fetch transcripts failed: ${response.status}`)
+    }
+
+    const data = (await response.json()) as { items?: PersistedTranscriptItem[] }
+    persistedTranscripts.value = Array.isArray(data.items) ? data.items.slice().reverse() : []
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'fetch transcripts failed'
+  } finally {
+    loadingPersisted.value = false
   }
 }
 
@@ -352,6 +400,7 @@ async function connectSocket() {
           text: payload.text,
         })
         partialText.value = ''
+        void fetchPersistedTranscripts()
       }
 
       if (payload.type === 'audio_metrics') {
@@ -392,6 +441,7 @@ function disconnectSocket() {
 function resetView() {
   partialText.value = ''
   finalTexts.value = []
+  persistedTranscripts.value = []
   events.value = []
   errorMessage.value = ''
   audioMetrics.value = {}

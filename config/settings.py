@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
     TRANSCRIPT_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "transcripts")
+    QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
 
     MODEL_BASE_DIR: Path = _ensure_dir(BASE_DIR / "models")
     ASR_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "asr")
@@ -44,8 +45,35 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "speech_transcript"
     QDRANT_CREATE_IF_NOT_EXIST: bool = True
 
+    RAG_TRANSCRIPT_ROOT: Path = TRANSCRIPT_SAVE_DIR
+    RAG_EMBED_MODEL_NAME: Path = EMBED_MODEL_NAME
+    RAG_QDRANT_COLLECTION: str = "speech_transcript_chunks"
+    RAG_QDRANT_PREFER_LOCAL: bool = True
+    RAG_QDRANT_LOCAL_PATH: Path = _ensure_dir(QDRANT_LOCAL_DIR / "speech_transcript_chunks")
+    RAG_QDRANT_TIMEOUT: int = 10
+    RAG_TOP_K: int = 5
+    RAG_CHUNK_MAX_CHARS: int = 500
+    RAG_CHUNK_OVERLAP_RECORDS: int = 1
+    RAG_CHUNK_MIN_CHARS: int = 80
+    RAG_SPLIT_LONG_RECORD: bool = True
+    RAG_ENABLE_LLM: bool = False
+    RAG_REALTIME_INDEXING_ENABLED: bool = True
+    RAG_REALTIME_FLUSH_RECORDS: int = 3
+    RAG_REALTIME_FLUSH_CHARS: int = 300
+    RAG_REALTIME_FLUSH_INTERVAL_SECONDS: float = 20.0
+    RAG_REALTIME_QUEUE_SIZE: int = 256
+    RAG_LLM_PROVIDER: str = "openai"
+    RAG_LLM_MODEL: str = "gpt-4o-mini"
+    RAG_LLM_API_KEY: str = ""
+    RAG_LLM_API_BASE: str = ""
+    RAG_LLM_TEMPERATURE: float = 0.1
+    RAG_LLM_MAX_TOKENS: int | None = 512
+    RAG_LLM_TIMEOUT: float = 60.0
+
     class Config:
         case_sensitive = True
+        env_file = Path(__file__).resolve().parent / ".env"
+        env_file_encoding = "utf-8"
 
 
 settings = Settings()

@@ -1,0 +1,11 @@
+# Core RAG runtime
+llama-index-core
+llama-index-vector-stores-qdrant
+llama-index-llms-openai
+qdrant-client
+
+# Embedding runtime
+sentence-transformers
+transformers
+torch
+openai

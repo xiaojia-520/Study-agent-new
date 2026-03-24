@@ -1,10 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.infrastructure.logger import get_logger
+from src.infrastructure.model_hub import model_hub
 from web.backend.app.api.http_sessions import router as session_router
 from web.backend.app.api.ws_audio import router as ws_audio_router
+from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
 
 app = FastAPI(title="Study Agent Backend")
+logger = get_logger("WebBackend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,6 +20,21 @@ app.add_middleware(
 
 app.include_router(session_router)
 app.include_router(ws_audio_router)
+
+
+@app.on_event("startup")
+async def warmup_models():
+    logger.info("Backend startup warmup: loading ASR model")
+    model_hub.load_asr_model()
+    logger.info("Backend startup warmup: loading FunASR offline model")
+    model_hub.load_funasr_model()
+    logger.info("Backend startup warmup complete")
+
+
+@app.on_event("shutdown")
+async def shutdown_runtime():
+    realtime_rag_indexer.close()
+    logger.info("Realtime RAG indexer stopped")
 
 
 @app.get("/")

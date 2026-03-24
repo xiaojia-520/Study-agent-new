@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
+import fs from 'node:fs'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -13,6 +14,13 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
+    },
+  },
+  server: {
+    host: '0.0.0.0',
+    https: {
+      key: fs.readFileSync('./certs/192.168.1.63+2-key.pem'),
+      cert: fs.readFileSync('./certs/192.168.1.63+2.pem'),
     },
   },
 })

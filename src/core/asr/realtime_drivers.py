@@ -22,6 +22,8 @@ class ASRLike(Protocol):
 
     def transcribe_offline(self, audio_data: np.ndarray) -> str: ...
 
+    def transcribe_offline_with_punc(self, audio_data: np.ndarray) -> str: ...
+
     def transcribe_stream(self, speech_chunk: np.ndarray, is_final: bool = False) -> str: ...
 
 
@@ -103,7 +105,7 @@ class ParaformerZhDriver(RealtimeASRDriver):
         seg_audio = self.buf.pop_all()
         if seg_audio.size > 0:
             try:
-                final_text = self.asr.transcribe_offline(seg_audio)
+                final_text = self.asr.transcribe_offline_with_punc(seg_audio)
                 if final_text:
                     logger.info(f"ASR(paraformer-zh): {final_text}")
                     if self.on_final:

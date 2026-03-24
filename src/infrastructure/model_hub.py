@@ -57,12 +57,15 @@ class ModelHub:
         return self._vad_model
 
     def load_funasr_model(self):
-        self.funasr_model = AutoModel(
-            model=settings.ASR_MODEL_NAME,
-            vad_model=settings.VAD_MODEL_NAME,
-            punc_model=settings.PUNC_MODEL_NAME,
-            sentence_timestamp=True,
-        )
+        if self.funasr_model is None:
+            logger.info("Loading FunASR offline model with punc/vad")
+            self.funasr_model = AutoModel(
+                model=settings.ASR_MODEL_NAME,
+                vad_model=settings.VAD_MODEL_NAME,
+                punc_model=settings.PUNC_MODEL_NAME,
+                sentence_timestamp=True,
+            )
+            logger.info("FunASR offline model loaded")
         return self.funasr_model
 
 

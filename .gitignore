@@ -67,8 +67,10 @@ logs/
 
 output.srt
 data/transcripts/
+data/qdrant/
 tests/uploads/
 tmp_wav/
+tmp_qdrant_test/
 uploads/
 
 ############################
@@ -78,15 +80,16 @@ uploads/
 .env.*
 config/.env
 *.local
+web/frontend/certs/
 
 ############################
 # Models / large binaries
 ############################
 models/
+Fun-ASR-Nano-2512/
 *.pt
 *.bin
 *.safetensors
 *.onnx
 *.ckpt
 *.mdl
-

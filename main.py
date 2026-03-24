@@ -58,8 +58,3 @@
 # if __name__ == "__main__":
 #     main()
 
-
-from src.application.vedio_transcriber import VedioTranscriber
-
-vt = VedioTranscriber()
-vt.start(r"E:\Study-agent-new-master\models\asr\SenseVoiceSmall\example\zh.mp3")
