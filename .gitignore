@@ -71,6 +71,7 @@ data/qdrant/
 tests/uploads/
 tmp_wav/
 tmp_qdrant_test/
+tmp_qdrant_eval*/
 uploads/
 
 ############################

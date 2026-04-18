@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 from typing import Any
 
 from config.settings import settings
@@ -70,6 +71,11 @@ class RagRuntime:
     query_service: RagQueryService
 
 
+_shared_runtime: RagRuntime | None = None
+_shared_runtime_signature: tuple[object, ...] | None = None
+_shared_runtime_lock = threading.RLock()
+
+
 def build_rag_runtime(config: RagRuntimeConfig | None = None) -> RagRuntime:
     runtime_config = config or RagRuntimeConfig.from_settings()
     embed_model = build_default_embed_model(runtime_config.embed_model_name)
@@ -101,13 +107,42 @@ def build_rag_runtime(config: RagRuntimeConfig | None = None) -> RagRuntime:
     )
 
 
+def get_shared_rag_runtime(config: RagRuntimeConfig | None = None) -> RagRuntime:
+    runtime_config = config or RagRuntimeConfig.from_settings()
+    runtime_signature = _build_runtime_signature(runtime_config)
+
+    global _shared_runtime, _shared_runtime_signature
+    with _shared_runtime_lock:
+        if _shared_runtime is not None and _shared_runtime_signature == runtime_signature:
+            return _shared_runtime
+
+        if _shared_runtime is not None:
+            _shared_runtime.index_store.close()
+
+        _shared_runtime = build_rag_runtime(runtime_config)
+        _shared_runtime_signature = runtime_signature
+        return _shared_runtime
+
+
+def close_shared_rag_runtime() -> None:
+    global _shared_runtime, _shared_runtime_signature
+
+    with _shared_runtime_lock:
+        runtime = _shared_runtime
+        _shared_runtime = None
+        _shared_runtime_signature = None
+
+    if runtime is not None:
+        runtime.index_store.close()
+
+
 def build_default_llm(config: RagRuntimeConfig | None = None) -> Any | None:
     runtime_config = config or RagRuntimeConfig.from_settings()
     if not runtime_config.llm_enabled:
         return None
 
     provider = (runtime_config.llm_provider or "").strip().lower()
-    if provider != "openai":
+    if provider not in {"openai", "deepseek"}:
         raise ValueError(f"unsupported RAG_LLM_PROVIDER: {runtime_config.llm_provider}")
     if not runtime_config.llm_api_key:
         raise ValueError("RAG_LLM_API_KEY is required when RAG_ENABLE_LLM=true")
@@ -118,6 +153,14 @@ def build_default_llm(config: RagRuntimeConfig | None = None) -> Any | None:
         raise ImportError(
             "llama-index-llms-openai is required for OpenAI-compatible LLM support."
         ) from exc
+
+    if provider == "deepseek":
+        _register_openai_compatible_models(
+            models={
+                "deepseek-chat": 64000,
+                "deepseek-reasoner": 64000,
+            }
+        )
 
     kwargs: dict[str, Any] = {
         "model": runtime_config.llm_model,
@@ -137,3 +180,40 @@ def _infer_embed_model_dim(embed_model: Any) -> int:
     if callable(getter):
         return int(getter())
     return int(settings.VECTOR_DIM)
+
+
+def _build_runtime_signature(config: RagRuntimeConfig) -> tuple[object, ...]:
+    chunk = config.chunk_options
+    return (
+        str(config.transcript_root),
+        config.qdrant_url,
+        config.qdrant_collection,
+        config.qdrant_prefer_local,
+        str(config.qdrant_local_path),
+        config.qdrant_timeout,
+        str(config.embed_model_name),
+        chunk.max_chars,
+        chunk.overlap_records,
+        chunk.min_chunk_chars,
+        chunk.split_long_record,
+        chunk.separator,
+        config.top_k,
+        config.llm_enabled,
+        config.llm_provider,
+        config.llm_model,
+        config.llm_api_base,
+        config.llm_temperature,
+        config.llm_max_tokens,
+        config.llm_timeout,
+    )
+
+
+def _register_openai_compatible_models(models: dict[str, int]) -> None:
+    try:
+        from llama_index.llms.openai import utils as openai_utils
+    except ImportError:
+        return
+
+    for model_name, context_window in models.items():
+        openai_utils.ALL_AVAILABLE_MODELS.setdefault(model_name, context_window)
+        openai_utils.CHAT_MODELS.setdefault(model_name, context_window)

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from config.settings import settings
-from src.application.rag_runtime import build_rag_runtime
+from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.core.knowledge.document_models import TranscriptRecord
 from web.backend.app.domain.session import RealtimeSession
 
@@ -45,13 +45,15 @@ class RealtimeRagIndexer:
         flush_chars: int = settings.RAG_REALTIME_FLUSH_CHARS,
         flush_interval_seconds: float = settings.RAG_REALTIME_FLUSH_INTERVAL_SECONDS,
         queue_size: int = settings.RAG_REALTIME_QUEUE_SIZE,
-        runtime_factory=build_rag_runtime,
+        runtime_factory=get_shared_rag_runtime,
+        runtime_closer=close_shared_rag_runtime,
     ) -> None:
         self.enabled = enabled
         self.flush_records = max(1, int(flush_records))
         self.flush_chars = max(1, int(flush_chars))
         self.flush_interval_seconds = max(1.0, float(flush_interval_seconds))
         self.runtime_factory = runtime_factory
+        self.runtime_closer = runtime_closer
 
         self._buffers: dict[str, _BufferedSessionState] = {}
         self._lock = threading.RLock()
@@ -122,10 +124,11 @@ class RealtimeRagIndexer:
         if self._worker.is_alive():
             self._worker.join(timeout=2.0)
 
-        runtime = self._runtime
-        if runtime is not None:
-            runtime.index_store.close()
-            self._runtime = None
+        if callable(self.runtime_closer):
+            self.runtime_closer()
+        elif self._runtime is not None:
+            self._runtime.index_store.close()
+        self._runtime = None
 
     def _watcher_loop(self) -> None:
         while not self._stop_event.wait(timeout=1.0):

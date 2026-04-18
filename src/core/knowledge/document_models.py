@@ -156,10 +156,25 @@ class SearchResult:
 
 
 @dataclass(slots=True)
+class AnswerCitation:
+    index: int
+    doc_id: str
+    snippet: str
+    score: Optional[float] = None
+    session_id: Optional[str] = None
+    subject: Optional[str] = None
+    source_type: Optional[str] = None
+    course_id: Optional[str] = None
+    lesson_id: Optional[str] = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class KnowledgeAnswer:
     query: str
     answer: Optional[str]
     results: list[SearchResult] = field(default_factory=list)
+    citations: list[AnswerCitation] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
 
 

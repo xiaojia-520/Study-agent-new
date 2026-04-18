@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.core.asr.realtime_models import resolve_realtime_asr_model
+from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
+from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
 from web.backend.app.services.session_rag_query_service import QueryScope, session_rag_query_service
 from web.backend.app.services.session_manager import session_manager
 from web.backend.app.services.transcript_service import transcript_service
@@ -29,6 +31,16 @@ class SessionQueryRequest(BaseModel):
     scope: QueryScope = QueryScope.AUTO
     top_k: Optional[int] = None
     with_llm: bool = False
+
+
+class SessionSummaryRequest(BaseModel):
+    focus: Optional[str] = None
+    max_items: Optional[int] = None
+
+
+class SessionQuizRequest(BaseModel):
+    focus: Optional[str] = None
+    question_count: Optional[int] = None
 
 
 @router.post("")
@@ -119,9 +131,63 @@ async def query_session(session_id: str, payload: SessionQueryRequest):
         "query": answer.query,
         "answer": answer.answer,
         "results": [asdict(result) for result in answer.results],
+        "citations": [asdict(citation) for citation in answer.citations],
         "metadata": metadata,
         "scope": metadata.get("scope"),
         "session_id": metadata.get("session_id"),
         "course_id": metadata.get("course_id"),
         "lesson_id": metadata.get("lesson_id"),
+    }
+
+
+@router.post("/{session_id}/summary")
+async def summarize_session(session_id: str, payload: SessionSummaryRequest):
+    try:
+        summary = session_lesson_summary_service.generate_summary(
+            session_id=session_id,
+            focus=payload.focus,
+            max_items=payload.max_items,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"session transcript not found: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "session_id": summary.session_id,
+        "course_id": summary.course_id,
+        "lesson_id": summary.lesson_id,
+        "subject": summary.subject,
+        "summary": summary.summary,
+        "key_points": list(summary.key_points),
+        "review_items": list(summary.review_items),
+        "important_terms": [asdict(item) for item in summary.important_terms],
+        "metadata": dict(summary.metadata),
+    }
+
+
+@router.post("/{session_id}/quiz")
+async def generate_session_quiz(session_id: str, payload: SessionQuizRequest):
+    try:
+        quiz = session_lesson_quiz_service.generate_quiz(
+            session_id=session_id,
+            focus=payload.focus,
+            question_count=payload.question_count,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"session transcript not found: {session_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "session_id": quiz.session_id,
+        "course_id": quiz.course_id,
+        "lesson_id": quiz.lesson_id,
+        "subject": quiz.subject,
+        "questions": [asdict(item) for item in quiz.questions],
+        "metadata": dict(quiz.metadata),
     }
