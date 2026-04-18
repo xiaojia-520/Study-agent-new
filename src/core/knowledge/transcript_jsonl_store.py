@@ -26,7 +26,10 @@ class TranscriptJsonlStore:
     def __init__(
         self,
         subject: str,
-        session_id: Optional[str] = None,
+        session_id: str,
+        storage_id: Optional[str] = None,
+        course_id: Optional[str] = None,
+        lesson_id: Optional[str] = None,
         root_dir: Optional[Path] = None,
     ):
         self.subject = (subject or "").strip()
@@ -35,11 +38,18 @@ class TranscriptJsonlStore:
 
         ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
         subject_tag = _sanitize_for_name(self.subject)
-        self.session_id = session_id or f"{subject_tag}_{ts}"
+        self.session_id = (session_id or "").strip()
+        if not self.session_id:
+            raise ValueError("session_id is required")
+        self.storage_id = (storage_id or f"{subject_tag}_{ts}").strip()
+        if not self.storage_id:
+            raise ValueError("storage_id is required")
+        self.course_id = (course_id or "").strip() or None
+        self.lesson_id = (lesson_id or "").strip() or None
 
         self.root_dir = root_dir or settings.TRANSCRIPT_SAVE_DIR
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        self.file_path = self.root_dir / f"{self.session_id}.jsonl"
+        self.file_path = self.root_dir / f"{self.storage_id}.jsonl"
         if not self.file_path.exists():
             self.file_path.touch()
 
@@ -76,6 +86,9 @@ class TranscriptJsonlStore:
 
             record: Dict[str, Any] = {
                 "session_id": self.session_id,
+                "storage_id": self.storage_id,
+                "course_id": self.course_id,
+                "lesson_id": self.lesson_id,
                 "chunk_id": chunk_id,
                 "subject": self.subject,
                 "source_type": source,

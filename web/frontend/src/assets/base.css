@@ -43,7 +43,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -145,6 +146,17 @@ button {
   color: var(--text);
 }
 
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-strong);
+  padding: 12px 14px;
+  color: var(--text);
+  resize: vertical;
+  min-height: 112px;
+}
+
 .field .select {
   width: 100%;
   border: 1px solid var(--line);
@@ -159,9 +171,27 @@ button {
   border-color: var(--primary);
 }
 
+.field textarea:focus {
+  outline: 2px solid rgba(21, 71, 52, 0.14);
+  border-color: var(--primary);
+}
+
 .field .select:focus {
   outline: 2px solid rgba(21, 71, 52, 0.14);
   border-color: var(--primary);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.checkbox-row input {
+  accent-color: var(--primary);
 }
 
 .actions {
@@ -249,6 +279,32 @@ button {
   padding-left: 12px;
 }
 
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.metadata-grid div {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.metadata-grid dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metadata-grid dd {
+  margin-top: 4px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
 .seq,
 .mono {
   font-family: 'Cascadia Code', 'Consolas', monospace;
@@ -289,6 +345,45 @@ button {
   font-weight: 700;
 }
 
+.result-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  list-style: none;
+}
+
+.result-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(231, 220, 200, 0.45);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .event-list pre {
   overflow: auto;
   white-space: pre-wrap;
@@ -309,5 +404,9 @@ button {
 
   .events {
     grid-column: span 1;
+  }
+
+  .metadata-grid {
+    grid-template-columns: 1fr;
   }
 }

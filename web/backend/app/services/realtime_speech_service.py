@@ -98,6 +98,8 @@ class RealtimeSpeechService:
             seq=seq,
             event_type="session_started",
             extra={
+                "course_id": session.course_id,
+                "lesson_id": session.lesson_id,
                 "status": session.status.value,
                 "sample_rate": session.sample_rate,
                 "channels": session.channels,

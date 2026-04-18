@@ -25,16 +25,19 @@ class TranscriptService:
         with self._lock:
             store = self._stores.get(session.session_id)
             if store is None:
-                store_session_id = self._build_store_session_id(session)
+                storage_id = self._build_storage_id(session)
                 store = TranscriptJsonlStore(
                     subject=session.subject or "untitled",
-                    session_id=store_session_id,
+                    session_id=session.session_id,
+                    storage_id=storage_id,
+                    course_id=session.course_id,
+                    lesson_id=session.lesson_id,
                 )
                 self._stores[session.session_id] = store
                 logger.info("Created transcript store for session %s", session.session_id)
             return store
 
-    def _build_store_session_id(self, session: RealtimeSession) -> str:
+    def _build_storage_id(self, session: RealtimeSession) -> str:
         subject_tag = self._sanitize_for_name(session.subject or "untitled")
         created_date = time.strftime("%Y%m%d", time.localtime(session.created_at or time.time()))
         return f"{created_date}_{subject_tag}_{session.session_id}"
@@ -81,7 +84,7 @@ class TranscriptService:
 
     def _resolve_file_path(self, session: RealtimeSession | None, session_id: str) -> Path | None:
         if session is not None:
-            candidate = settings.TRANSCRIPT_SAVE_DIR / f"{self._build_store_session_id(session)}.jsonl"
+            candidate = settings.TRANSCRIPT_SAVE_DIR / f"{self._build_storage_id(session)}.jsonl"
             if candidate.exists():
                 return candidate
 

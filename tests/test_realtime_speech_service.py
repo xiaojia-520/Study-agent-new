@@ -20,12 +20,17 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         sender = FakeSender()
         session = RealtimeSession(
             session_id="session-final",
+            course_id="math-course",
+            lesson_id="math-course-lesson-1",
             subject="math",
             created_at=int(time.time()),
             updated_at=int(time.time()),
         )
         persisted_record = {
             "session_id": "session-final",
+            "storage_id": "20260418_math_session-final",
+            "course_id": "math-course",
+            "lesson_id": "math-course-lesson-1",
             "chunk_id": 1,
             "subject": "math",
             "source_type": "realtime",
@@ -63,6 +68,8 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         pipeline = FakePipeline()
         session = RealtimeSession(
             session_id="session-stop",
+            course_id="math-course",
+            lesson_id="math-course-lesson-1",
             created_at=int(time.time()),
             updated_at=int(time.time()),
         )

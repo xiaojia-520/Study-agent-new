@@ -16,6 +16,8 @@ class SessionStatus(str, Enum):
 @dataclass(slots=True)
 class RealtimeSession:
     session_id: str
+    course_id: str
+    lesson_id: str
     subject: Optional[str] = None
     client_id: Optional[str] = None
     sample_rate: int = 16000

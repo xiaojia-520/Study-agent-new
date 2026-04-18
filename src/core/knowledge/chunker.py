@@ -280,6 +280,9 @@ def _build_chunk_from_segments(
 
     first_record = unique_records[0]
     last_record = unique_records[-1]
+    storage_id = _single_shared_value(record.storage_id for record in unique_records)
+    course_id = _single_shared_value(record.course_id for record in unique_records)
+    lesson_id = _single_shared_value(record.lesson_id for record in unique_records)
     source_file = _single_shared_value(record.source_file for record in unique_records)
 
     return TranscriptChunk(
@@ -292,6 +295,9 @@ def _build_chunk_from_segments(
         first_chunk_id=first_record.chunk_id,
         last_chunk_id=last_record.chunk_id,
         record_count=len(unique_records),
+        storage_id=storage_id,
+        course_id=course_id,
+        lesson_id=lesson_id,
         source_file=source_file,
         start_ms=_first_non_none(record.start_ms for record in unique_records),
         end_ms=_last_non_none(record.end_ms for record in unique_records),

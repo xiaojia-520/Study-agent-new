@@ -131,6 +131,9 @@ class TranscriptChunkerTests(unittest.TestCase):
         self.assertEqual([chunk.doc_id for chunk in chunks], ["session-a:1-2:0", "session-a:2-3:1", "session-a:3-4:2"])
         self.assertEqual([chunk.content for chunk in chunks], ["aaaa\nbbbb", "bbbb\ncccc", "cccc\ndddd"])
         self.assertEqual(chunks[1].metadata["record_ids"], ["session-a:2", "session-a:3"])
+        self.assertEqual(chunks[1].course_id, "math-course")
+        self.assertEqual(chunks[1].lesson_id, "math-course-lesson-1")
+        self.assertEqual(chunks[1].storage_id, "storage-session-a")
 
     def test_build_chunks_for_session_splits_long_record(self) -> None:
         chunks = build_chunks_for_session(
@@ -168,6 +171,9 @@ class TranscriptChunkerTests(unittest.TestCase):
             text=text,
             clean_text=text,
             created_at=created_at or 100 + chunk_id,
+            storage_id=f"storage-{session_id}",
+            course_id="math-course",
+            lesson_id="math-course-lesson-1",
             source_file=None,
             start_ms=None,
             end_ms=None,

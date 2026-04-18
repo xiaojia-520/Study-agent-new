@@ -55,6 +55,9 @@ class TranscriptRecord:
     text: str
     clean_text: str
     created_at: int
+    storage_id: Optional[str] = None
+    course_id: Optional[str] = None
+    lesson_id: Optional[str] = None
     source_file: Optional[str] = None
     start_ms: Optional[int] = None
     end_ms: Optional[int] = None
@@ -78,6 +81,9 @@ class TranscriptRecord:
             text=text or clean_text,
             clean_text=clean_text,
             created_at=_require_int(payload.get("created_at"), "created_at"),
+            storage_id=_optional_str(payload.get("storage_id")),
+            course_id=_optional_str(payload.get("course_id")),
+            lesson_id=_optional_str(payload.get("lesson_id")),
             source_file=_optional_str(payload.get("source_file")),
             start_ms=_optional_int(payload.get("start_ms"), "start_ms"),
             end_ms=_optional_int(payload.get("end_ms"), "end_ms"),
@@ -103,6 +109,9 @@ class TranscriptChunk:
     first_chunk_id: int
     last_chunk_id: int
     record_count: int
+    storage_id: Optional[str] = None
+    course_id: Optional[str] = None
+    lesson_id: Optional[str] = None
     source_file: Optional[str] = None
     start_ms: Optional[int] = None
     end_ms: Optional[int] = None
@@ -119,6 +128,12 @@ class TranscriptChunk:
             "last_chunk_id": self.last_chunk_id,
             "record_count": self.record_count,
         }
+        if self.storage_id is not None:
+            payload["storage_id"] = self.storage_id
+        if self.course_id is not None:
+            payload["course_id"] = self.course_id
+        if self.lesson_id is not None:
+            payload["lesson_id"] = self.lesson_id
         if self.source_file is not None:
             payload["source_file"] = self.source_file
         if self.start_ms is not None:

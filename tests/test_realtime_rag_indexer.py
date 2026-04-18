@@ -96,6 +96,8 @@ class RealtimeRagIndexerTests(unittest.TestCase):
         now = int(time.time())
         return RealtimeSession(
             session_id=session_id,
+            course_id="math-course",
+            lesson_id="math-course-lesson-1",
             subject="math",
             created_at=now,
             updated_at=now,

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from config.settings import settings
+from src.core.knowledge.query_filters import MetadataFilterSpec
 
 
 @dataclass(slots=True)
@@ -149,7 +150,7 @@ class QdrantIndexStore:
         index = self.load_index(embed_model=embed_model)
         kwargs: dict[str, Any] = {"similarity_top_k": top_k}
         if filters is not None:
-            kwargs["filters"] = filters
+            kwargs["filters"] = self._normalize_filters(filters)
         return index.as_retriever(**kwargs)
 
     def as_query_engine(
@@ -165,7 +166,7 @@ class QdrantIndexStore:
         if llm is not None:
             kwargs["llm"] = llm
         if filters is not None:
-            kwargs["filters"] = filters
+            kwargs["filters"] = self._normalize_filters(filters)
         return index.as_query_engine(**kwargs)
 
     def reset_collection(self) -> None:
@@ -205,6 +206,21 @@ class QdrantIndexStore:
             ) from exc
         return StorageContext, VectorStoreIndex, None, QdrantVectorStore
 
+    @staticmethod
+    def _load_metadata_filter_types() -> tuple[type[Any], type[Any], Any, Any]:
+        try:
+            from llama_index.core.vector_stores.types import (
+                FilterCondition,
+                FilterOperator,
+                MetadataFilter,
+                MetadataFilters,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "llama-index-core is required for metadata filters. Install llama-index-core."
+            ) from exc
+        return MetadataFilter, MetadataFilters, FilterCondition, FilterOperator
+
     def _get_collection_vector_dim(self, client: Any) -> int | None:
         collection_info = client.get_collection(collection_name=self.config.collection_name)
         vectors = collection_info.config.params.vectors
@@ -233,3 +249,27 @@ class QdrantIndexStore:
                     if dimension is not None:
                         return int(dimension)
         return int(self.config.vector_dim)
+
+    def _normalize_filters(self, filters: Any) -> Any:
+        if not isinstance(filters, MetadataFilterSpec):
+            return filters
+
+        metadata_filter_cls, metadata_filters_cls, filter_condition_cls, filter_operator_cls = (
+            self._load_metadata_filter_types()
+        )
+        condition = {
+            "and": getattr(filter_condition_cls, "AND"),
+            "or": getattr(filter_condition_cls, "OR"),
+        }[filters.condition]
+        clauses = [
+            metadata_filter_cls(
+                key=clause.key,
+                value=clause.value,
+                operator={
+                    "eq": getattr(filter_operator_cls, "EQ"),
+                    "ne": getattr(filter_operator_cls, "NE"),
+                }[clause.operator],
+            )
+            for clause in filters.clauses
+        ]
+        return metadata_filters_cls(filters=clauses, condition=condition)
