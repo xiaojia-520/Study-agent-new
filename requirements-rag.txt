@@ -4,8 +4,24 @@ llama-index-vector-stores-qdrant
 llama-index-llms-openai
 qdrant-client
 
+# Web backend
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-dotenv
+
 # Embedding runtime
 sentence-transformers
 transformers
 torch
 openai
+numpy
+
+# ASR / audio pipeline
+funasr
+silero-vad
+sounddevice
+ffmpeg-python
+
+# Transcript persistence
+jsonlines

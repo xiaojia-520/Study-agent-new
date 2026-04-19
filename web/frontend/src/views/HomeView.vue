@@ -1529,34 +1529,30 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+@reference "tailwindcss";
+
 .study-shell {
   width: min(1480px, calc(100vw - 32px));
-  margin: 0 auto;
-  padding: 28px 0 56px;
+  @apply mx-auto pt-7 pb-14;
 }
 
 .hero-band {
-  display: grid;
+  @apply mb-5 grid items-stretch gap-5;
   grid-template-columns: 1.3fr 0.7fr;
-  gap: 20px;
-  align-items: stretch;
-  margin-bottom: 20px;
 }
 
 .hero-copy,
 .hero-status,
 .card {
-  border: 1px solid var(--line-soft);
-  border-radius: 28px;
+  @apply rounded-[28px] border;
   background: var(--panel-bg);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(18px);
+  border-color: var(--line-soft);
 }
 
 .hero-copy {
-  position: relative;
-  overflow: hidden;
-  padding: 36px;
+  @apply relative overflow-hidden p-9;
 }
 
 .hero-copy::after {
@@ -1570,11 +1566,8 @@ onUnmounted(() => {
 
 .hero-kicker,
 .section-kicker {
+  @apply text-[0.8rem] font-extrabold uppercase tracking-[0.18em];
   color: var(--accent-strong);
-  font-size: 0.8rem;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
 }
 
 .hero-copy h1,
@@ -1583,18 +1576,15 @@ onUnmounted(() => {
 }
 
 .hero-copy h1 {
+  @apply mt-3 leading-[0.96] tracking-[-0.04em];
   max-width: 12ch;
-  margin-top: 12px;
   font-size: clamp(2.6rem, 5vw, 4.8rem);
-  line-height: 0.96;
-  letter-spacing: -0.04em;
 }
 
 .hero-text {
+  @apply mt-4 text-[1.04rem];
   max-width: 52rem;
-  margin-top: 16px;
   color: var(--text-muted);
-  font-size: 1.04rem;
 }
 
 .hero-tags,
@@ -1609,32 +1599,23 @@ onUnmounted(() => {
 .snapshot-grid,
 .drawer-grid,
 .transcript-layout {
-  display: grid;
-  gap: 14px;
+  @apply grid gap-3.5;
 }
 
 .hero-tags {
-  margin-top: 20px;
-  display: flex;
-  flex-wrap: wrap;
+  @apply mt-5 flex flex-wrap;
 }
 
 .hero-tags span,
 .inline-badge {
-  border: 1px solid rgba(25, 53, 69, 0.15);
-  border-radius: 999px;
+  @apply rounded-full border px-3.5 py-2 text-[0.85rem] font-bold;
   background: rgba(255, 255, 255, 0.72);
-  padding: 8px 14px;
   color: var(--text-muted);
-  font-size: 0.85rem;
-  font-weight: 700;
+  border-color: rgba(25, 53, 69, 0.15);
 }
 
 .hero-status {
-  display: grid;
-  gap: 18px;
-  padding: 28px;
-  align-content: space-between;
+  @apply grid content-between gap-[18px] p-7;
 }
 
 .hero-status.is-live {
@@ -1659,13 +1640,10 @@ onUnmounted(() => {
 }
 
 .status-pill {
-  display: inline-flex;
+  @apply inline-flex self-start rounded-[20px] px-[18px] py-4;
+  background: rgba(255, 255, 255, 0.1);
   flex-direction: column;
   gap: 6px;
-  align-self: start;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.1);
-  padding: 16px 18px;
 }
 
 .status-pill span,
@@ -1673,103 +1651,89 @@ onUnmounted(() => {
 .field span,
 .small-label,
 .snapshot-grid dt {
+  @apply text-[0.78rem] font-bold uppercase tracking-[0.08em];
   color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .status-pill strong {
-  font-size: 1.4rem;
-  line-height: 1.1;
+  @apply text-[1.4rem] leading-[1.1];
 }
 
 .hero-metrics {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .hero-metrics div,
 .session-strip article,
 .snapshot-grid div {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  padding-top: 12px;
+  @apply border-t pt-3;
+  border-top-color: rgba(255, 255, 255, 0.12);
 }
 
 .hero-metrics dd,
 .session-strip strong,
 .snapshot-grid dd {
-  margin-top: 6px;
-  font-weight: 700;
-  word-break: break-word;
+  @apply mt-1.5 break-words font-bold;
 }
 
 .notice {
-  border-radius: 18px;
-  padding: 12px 16px;
-  font-size: 0.95rem;
+  @apply rounded-[18px] px-4 py-3 text-[0.95rem];
 }
 
 .notice-soft {
-  border: 1px solid var(--line-soft);
+  @apply border;
   background: rgba(255, 251, 244, 0.72);
   color: var(--text-muted);
+  border-color: var(--line-soft);
 }
 
 .notice-error {
-  border: 1px solid rgba(168, 63, 48, 0.18);
+  @apply border;
   background: rgba(250, 237, 231, 0.94);
   color: #8d2f20;
+  border-color: rgba(168, 63, 48, 0.18);
 }
 
 .workspace-grid {
-  display: grid;
+  @apply grid gap-5;
   grid-template-columns: 1.18fr 0.82fr;
-  gap: 20px;
 }
 
 .main-column,
 .side-column {
-  display: grid;
-  gap: 20px;
+  @apply grid gap-5;
 }
 
 .card {
-  padding: 26px;
+  @apply p-[26px];
 }
 
 .section-head,
 .mini-head,
 .list-meta,
 .quiz-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  @apply flex items-center justify-between gap-3;
 }
 
 .section-head {
-  margin-bottom: 18px;
+  @apply mb-[18px];
 }
 
 .section-head h2 {
-  margin-top: 6px;
-  font-size: 1.65rem;
-  line-height: 1.05;
+  @apply mt-1.5 text-[1.65rem] leading-[1.05];
 }
 
 .card-form .form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .compact-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .field,
 .checkbox-field {
-  display: grid;
-  gap: 8px;
+  @apply grid gap-2;
 }
 
 .field-wide {
@@ -1779,44 +1743,35 @@ onUnmounted(() => {
 .field input,
 .field textarea,
 .field select {
-  width: 100%;
-  border: 1px solid var(--line-soft);
-  border-radius: 18px;
+  @apply w-full rounded-[18px] border bg-white/85 px-4 py-3.5 transition-[border-color,box-shadow,transform] duration-150 ease-in-out;
   background: rgba(255, 255, 255, 0.84);
-  padding: 14px 16px;
   color: var(--text-main);
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 120ms ease;
+  border-color: var(--line-soft);
 }
 
 .field textarea {
-  resize: vertical;
+  @apply resize-y;
   min-height: 118px;
 }
 
 .field input:focus,
 .field textarea:focus,
 .field select:focus {
-  outline: none;
+  @apply outline-none;
   border-color: rgba(25, 53, 69, 0.42);
   box-shadow: 0 0 0 4px rgba(25, 53, 69, 0.08);
 }
 
 .advanced-panel {
-  margin-top: 18px;
-  border: 1px dashed var(--line-soft);
-  border-radius: 22px;
+  @apply mt-[18px] rounded-[22px] border border-dashed px-4 pt-3.5 pb-[18px];
   background: rgba(255, 255, 255, 0.36);
-  padding: 14px 16px 18px;
+  border-color: var(--line-soft);
 }
 
 .advanced-panel summary,
 .text-button {
-  cursor: pointer;
+  @apply cursor-pointer font-bold;
   color: var(--accent-strong);
-  font-weight: 700;
 }
 
 .advanced-panel summary {
@@ -1828,14 +1783,11 @@ onUnmounted(() => {
 }
 
 .advanced-panel .form-grid {
-  margin-top: 14px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply mt-3.5 grid-cols-2;
 }
 
 .action-row {
-  display: flex;
-  flex-wrap: wrap;
-  margin-top: 18px;
+  @apply mt-[18px] flex flex-wrap;
 }
 
 .button,
@@ -1846,9 +1798,7 @@ onUnmounted(() => {
 }
 
 .button {
-  border-radius: 999px;
-  padding: 12px 18px;
-  font-weight: 700;
+  @apply rounded-full px-[18px] py-3 font-bold;
   transition:
     transform 120ms ease,
     opacity 120ms ease,
@@ -1888,8 +1838,8 @@ onUnmounted(() => {
 }
 
 .session-strip {
+  @apply mt-5 grid-cols-4;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-top: 20px;
 }
 
 .session-strip article {
@@ -1898,11 +1848,8 @@ onUnmounted(() => {
 
 .session-strip span,
 .qa-summary span {
+  @apply text-[0.74rem] font-bold uppercase tracking-[0.08em];
   color: var(--text-muted);
-  font-size: 0.74rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .transcript-layout {
@@ -1914,10 +1861,9 @@ onUnmounted(() => {
 .subcard,
 .study-block,
 .quiz-card {
-  border: 1px solid var(--line-soft);
-  border-radius: 24px;
+  @apply rounded-[24px] border p-[18px];
   background: rgba(255, 255, 255, 0.58);
-  padding: 18px;
+  border-color: var(--line-soft);
 }
 
 .partial-bubble,
@@ -1930,33 +1876,28 @@ onUnmounted(() => {
 }
 
 .partial-bubble {
-  margin-top: 10px;
-  padding: 18px;
-  font-size: 1.1rem;
+  @apply mt-2.5 p-[18px] text-[1.1rem];
 }
 
 .answer-panel {
-  margin-top: 16px;
-  padding: 22px;
+  @apply mt-4 p-[22px];
 }
 
 .answer-text {
-  margin-top: 8px;
-  white-space: pre-wrap;
-  line-height: 1.7;
+  @apply mt-2 whitespace-pre-wrap leading-[1.7];
 }
 
 .placeholder {
+  @apply leading-[1.6];
   color: var(--text-muted);
-  line-height: 1.6;
 }
 
 .mini-head {
-  margin-bottom: 14px;
+  @apply mb-3.5;
 }
 
 .mini-head h3 {
-  font-size: 1rem;
+  @apply text-base;
 }
 
 .transcript-list,
@@ -1965,40 +1906,32 @@ onUnmounted(() => {
 .option-list,
 .event-list,
 .quiz-stack {
-  display: grid;
-  gap: 12px;
-  list-style: none;
+  @apply grid list-none gap-3;
 }
 
 .transcript-list li,
 .result-list li,
 .event-list li {
-  border-radius: 18px;
+  @apply rounded-[18px] p-3.5;
   background: rgba(251, 247, 238, 0.92);
-  padding: 14px;
 }
 
 .list-meta {
-  margin-bottom: 8px;
+  @apply mb-2 text-[0.82rem];
   color: var(--text-muted);
-  font-size: 0.82rem;
 }
 
 .list-meta span:last-child {
-  text-align: right;
+  @apply text-right;
 }
 
 .query-controls {
+  @apply items-end;
   grid-template-columns: 1fr 160px;
-  align-items: end;
 }
 
 .checkbox-field {
-  align-self: center;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 22px;
+  @apply mt-[22px] flex self-center items-center gap-2.5;
   color: var(--text-muted);
 }
 
@@ -2012,28 +1945,25 @@ onUnmounted(() => {
 .result-grid,
 .snapshot-grid,
 .term-grid {
-  margin-top: 18px;
+  @apply mt-[18px];
 }
 
 .qa-summary {
-  display: grid;
+  @apply grid grid-cols-3 gap-3;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
 }
 
 .qa-summary div {
-  border-top: 1px solid var(--line-soft);
-  padding-top: 12px;
+  @apply border-t pt-3;
+  border-top-color: var(--line-soft);
 }
 
 .qa-summary strong {
-  display: block;
-  margin-top: 6px;
-  word-break: break-word;
+  @apply mt-1.5 block break-words;
 }
 
 .result-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .subcard small {
@@ -2041,28 +1971,24 @@ onUnmounted(() => {
 }
 
 .study-stack {
-  display: grid;
-  gap: 14px;
-  margin-top: 16px;
+  @apply mt-4 grid gap-3.5;
 }
 
 .bullet-list {
-  list-style: disc;
-  padding-left: 18px;
+  @apply list-disc pl-[18px];
 }
 
 .term-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .term-card {
-  border-radius: 20px;
+  @apply rounded-[20px] p-3.5;
   background: rgba(248, 242, 233, 0.92);
-  padding: 14px;
 }
 
 .term-card p {
-  margin-top: 6px;
+  @apply mt-1.5;
   color: var(--text-muted);
 }
 
@@ -2073,62 +1999,54 @@ onUnmounted(() => {
 }
 
 .quiz-stack {
-  margin-top: 16px;
+  @apply mt-4;
 }
 
 .quiz-card {
-  display: grid;
-  gap: 12px;
+  @apply grid gap-3;
 }
 
 .quiz-head span {
+  @apply text-[0.82rem];
   color: var(--text-muted);
-  font-size: 0.82rem;
 }
 
 .quiz-question {
-  font-size: 1.04rem;
-  font-weight: 700;
+  @apply text-[1.04rem] font-bold;
 }
 
 .option-list {
-  list-style: decimal;
-  padding-left: 20px;
+  @apply list-decimal pl-5;
 }
 
 .session-card {
-  align-self: start;
+  @apply self-start;
 }
 
 .snapshot-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  @apply grid-cols-2;
 }
 
 .debug-drawer {
-  margin-top: 20px;
-  border: 1px solid var(--line-soft);
-  border-radius: 26px;
+  @apply mt-5 rounded-[26px] border px-4 pt-3 pb-4;
   background: rgba(246, 241, 231, 0.72);
-  padding: 12px 16px 16px;
+  border-color: var(--line-soft);
 }
 
 .debug-drawer summary {
-  cursor: pointer;
-  font-weight: 700;
+  @apply cursor-pointer font-bold;
 }
 
 .drawer-grid {
-  margin-top: 14px;
+  @apply mt-3.5;
 }
 
 .drawer-card {
-  padding: 20px;
+  @apply p-5;
 }
 
 .event-list pre {
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  @apply overflow-auto whitespace-pre-wrap break-words;
   color: var(--text-muted);
 }
 
@@ -2150,15 +2068,13 @@ onUnmounted(() => {
 @media (max-width: 780px) {
   .study-shell {
     width: min(100vw - 20px, 100%);
-    padding-top: 18px;
-    padding-bottom: 36px;
+    @apply pt-[18px] pb-9;
   }
 
   .hero-copy,
   .hero-status,
   .card {
-    padding: 20px;
-    border-radius: 22px;
+    @apply rounded-[22px] p-5;
   }
 
   .hero-copy h1 {
@@ -2177,7 +2093,7 @@ onUnmounted(() => {
   }
 
   .checkbox-field {
-    margin-top: 0;
+    @apply mt-0;
   }
 }
 </style>

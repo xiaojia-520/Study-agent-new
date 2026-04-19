@@ -1,76 +1,133 @@
-:root {
-  --bg-cream: #f4efe6;
-  --bg-wash: #ece2d1;
-  --panel-bg: rgba(255, 250, 242, 0.72);
-  --line-soft: rgba(27, 42, 52, 0.12);
-  --text-main: #1b2a34;
-  --text-muted: #60707a;
-  --accent-strong: #b85b37;
-  --shadow-soft: 0 24px 64px rgba(35, 28, 19, 0.12);
-  --font-display: 'Source Han Serif SC', 'Noto Serif SC', 'STSong', 'Georgia', serif;
-  --font-sans: 'Avenir Next', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-}
+@import "tailwindcss";
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-}
+@layer base {
+  :root {
+    color-scheme: light;
 
-html {
-  font-size: 16px;
-}
+    /* 背景 */
+    --bg-base: 246 248 251;
+    --bg-muted: 238 242 247;
+    --bg-elevated: 255 255 255;
+    --bg-panel: 255 255 255;
 
-body {
-  min-height: 100vh;
-  color: var(--text-main);
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.95), transparent 26%),
-    radial-gradient(circle at 80% 10%, rgba(183, 93, 55, 0.16), transparent 24%),
-    linear-gradient(135deg, var(--bg-cream), var(--bg-wash));
-  font-family: var(--font-sans);
-  line-height: 1.5;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+    /* 文本 */
+    --text-main: 24 34 45;
+    --text-subtle: 95 107 122;
+    --text-faint: 139 151 166;
+    --text-inverse: 248 250 252;
 
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.08)),
-    repeating-linear-gradient(
-      90deg,
-      transparent 0,
-      transparent 88px,
-      rgba(27, 42, 52, 0.025) 88px,
-      rgba(27, 42, 52, 0.025) 89px
-    );
-  pointer-events: none;
-  opacity: 0.5;
-}
+    /* 品牌色 */
+    --accent: 212 107 61;
+    --accent-hover: 187 93 52;
+    --accent-soft: 212 107 61;
 
-body,
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
+    /* 状态色 */
+    --success: 31 157 104;
+    --warning: 216 155 29;
+    --danger: 214 69 69;
 
-button {
-  cursor: pointer;
-}
+    /* 边框 */
+    --line-soft: 24 34 45;
+    --line-medium: 24 34 45;
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+    /* 阴影 */
+    --shadow-soft: 0 8px 24px rgba(15, 23, 42, 0.06);
+    --shadow-panel: 0 18px 48px rgba(15, 23, 42, 0.1);
 
-#app {
-  position: relative;
-  width: 100%;
+    /* 圆角 */
+    --radius-card: 22px;
+    --radius-soft: 16px;
+    --radius-pill: 999px;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+  }
+
+  html,
+  body,
+  #app {
+    min-height: 100%;
+  }
+
+  body {
+    @apply m-0 min-h-screen text-[rgb(var(--text-main))] antialiased;
+    font-family:
+      "Inter",
+      "PingFang SC",
+      "Hiragino Sans GB",
+      "Microsoft YaHei",
+      "Noto Sans SC",
+      sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(255, 255, 255, 0.92), transparent 28%),
+      radial-gradient(circle at 85% 10%, rgba(212, 107, 61, 0.10), transparent 22%),
+      radial-gradient(circle at 50% 100%, rgba(77, 124, 255, 0.08), transparent 30%),
+      linear-gradient(180deg, rgb(var(--bg-base)) 0%, rgb(var(--bg-muted)) 100%);
+    line-height: 1.55;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)),
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent 95px,
+        rgba(24, 34, 45, 0.025) 95px,
+        rgba(24, 34, 45, 0.025) 96px
+      );
+    pointer-events: none;
+    opacity: 0.35;
+    z-index: -1;
+  }
+
+  body,
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button {
+    @apply cursor-pointer;
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    @apply block max-w-full;
+  }
+
+  ul,
+  ol {
+    @apply m-0 list-none p-0;
+  }
+
+  ::selection {
+    background: rgba(212, 107, 61, 0.2);
+    color: rgb(var(--text-main));
+  }
 }
