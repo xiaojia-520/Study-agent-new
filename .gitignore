@@ -68,6 +68,8 @@ logs/
 output.srt
 data/transcripts/
 data/qdrant/
+data/*.sqlite3
+data/*.sqlite3-*
 tests/uploads/
 tmp_wav/
 tmp_qdrant_test/

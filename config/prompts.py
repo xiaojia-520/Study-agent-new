@@ -7,13 +7,18 @@ from src.core.knowledge.document_models import AnswerCitation
 
 RAG_CITED_ANSWER_SYSTEM_PROMPT = """You are a retrieval-grounded study assistant.
 
-Answer the user's question using only the retrieved context blocks provided below.
+Answer the user's question using only the retrieved context blocks, recent transcript context, and conversation history provided below.
 Rules:
-- Do not invent facts that are not supported by the retrieved context.
+- Do not invent facts that are not supported by the provided context.
 - If the context is insufficient, say so plainly.
 - Keep the answer concise and directly useful for studying.
-- Cite factual statements inline using square-bracket citations like [1] or [1][2].
-- Only cite citation numbers that exist in the provided context.
+- Cite factual statements from retrieved context blocks inline using square-bracket citations like [1] or [1][2].
+- Recent transcript context is for conversational continuity and indexing-lag fallback.
+- Conversation history is for resolving follow-up references and preserving user intent.
+- Recent transcript context has no citation number; do not invent citation numbers for it.
+- Conversation history has no citation number; do not invent citation numbers for it.
+- If only recent transcript context or conversation history supports the answer, state that plainly without numeric citations.
+- Only cite citation numbers that exist in the retrieved context blocks.
 - Prefer the same language as the user's question. Default to Simplified Chinese when unclear.
 """
 
@@ -25,6 +30,8 @@ def build_rag_cited_answer_prompt(
     question: str,
     scope_label: str,
     citations: Iterable[AnswerCitation],
+    recent_transcripts: Iterable[str] = (),
+    conversation_history: Iterable[tuple[str, str | None]] = (),
 ) -> str:
     context_blocks = []
     for citation in citations:
@@ -46,16 +53,49 @@ def build_rag_cited_answer_prompt(
         )
 
     joined_context = "\n\n".join(context_blocks)
+    conversation_context = _build_conversation_history_context(conversation_history)
+    recent_context = _build_recent_transcript_context(recent_transcripts)
     return "\n\n".join(
         [
             RAG_CITED_ANSWER_SYSTEM_PROMPT.strip(),
             f"Question: {question.strip()}",
             f"Query scope: {scope_label}",
+            "Conversation history:",
+            conversation_context,
+            "Recent transcript context:",
+            recent_context,
             "Retrieved context blocks:",
             joined_context or "[no context retrieved]",
             "Write the final answer only. Do not output JSON or any extra headings.",
         ]
     )
+
+
+def _build_recent_transcript_context(recent_transcripts: Iterable[str]) -> str:
+    blocks = []
+    for index, text in enumerate(recent_transcripts, start=1):
+        clean_text = " ".join(str(text).strip().split())
+        if clean_text:
+            blocks.append(f"R{index}. {clean_text}")
+    return "\n".join(blocks) or "[no recent transcript]"
+
+
+def _build_conversation_history_context(conversation_history: Iterable[tuple[str, str | None]]) -> str:
+    blocks = []
+    for index, (user_text, assistant_text) in enumerate(conversation_history, start=1):
+        user = " ".join(str(user_text).strip().split())
+        assistant = " ".join(str(assistant_text or "").strip().split())
+        if not user and not assistant:
+            continue
+        lines = [f"Turn {index}:"]
+        if user:
+            lines.append(f"User: {user}")
+        if assistant:
+            lines.append(f"Assistant: {assistant}")
+        else:
+            lines.append("Assistant: [no generated answer]")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) or "[no conversation history]"
 
 
 LESSON_SUMMARY_JSON_SCHEMA = """{

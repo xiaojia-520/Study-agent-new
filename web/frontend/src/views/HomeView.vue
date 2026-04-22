@@ -131,6 +131,7 @@ const modelName = ref('paraformer-zh')
 const modelOptions = [
   { value: 'paraformer-zh', label: 'paraformer-zh' },
   { value: 'paraformer-zh-streaming', label: 'paraformer-zh-streaming' },
+  { value: 'paraformer-zh-streaming-2pass', label: 'paraformer-zh-streaming-2pass' },
 ]
 
 const microphoneOptions = ref<MicrophoneOption[]>([])

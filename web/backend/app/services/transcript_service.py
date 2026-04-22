@@ -82,6 +82,30 @@ class TranscriptService:
                 records.append(json.loads(line))
         return records
 
+    def list_lesson_transcripts(self, *, course_id: str, lesson_id: str):
+        records = []
+        for file_path in sorted(settings.TRANSCRIPT_SAVE_DIR.glob("*.jsonl")):
+            try:
+                with file_path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        record = json.loads(line)
+                        if record.get("course_id") == course_id and record.get("lesson_id") == lesson_id:
+                            records.append(record)
+            except (OSError, json.JSONDecodeError):
+                logger.warning("Failed to read transcript file %s", file_path, exc_info=True)
+
+        records.sort(
+            key=lambda item: (
+                int(item.get("created_at") or 0),
+                str(item.get("session_id") or ""),
+                int(item.get("chunk_id") or 0),
+            )
+        )
+        return records
+
     def _resolve_file_path(self, session: RealtimeSession | None, session_id: str) -> Path | None:
         if session is not None:
             candidate = settings.TRANSCRIPT_SAVE_DIR / f"{self._build_storage_id(session)}.jsonl"

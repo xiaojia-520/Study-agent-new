@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import threading
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from config.prompts import NO_CONTEXT_ANSWER, build_rag_cited_answer_prompt
 from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
-from src.core.knowledge.document_models import AnswerCitation, KnowledgeAnswer, SearchResult
+from src.core.knowledge.document_models import AnswerCitation, KnowledgeAnswer, SearchResult, TranscriptRecord
 from src.core.knowledge.query_filters import MetadataFilterClause, MetadataFilterSpec
 from web.backend.app.domain.session import RealtimeSession
+from web.backend.app.services.chat_memory_service import ChatMemoryService, ChatMemoryTurn, chat_memory_service
 from web.backend.app.services.session_manager import session_manager
+from web.backend.app.services.transcript_service import transcript_service
 
 
 def _build_runtime():
@@ -101,10 +103,20 @@ class SessionRagQueryService:
         runtime_factory=None,
         runtime_closer=None,
         session_getter=session_manager.get_session,
+        transcript_loader=transcript_service.list_session_transcripts,
+        recent_transcript_limit: int = 3,
+        memory_service: ChatMemoryService | None = None,
+        memory_turn_limit: int = 6,
+        memory_search_turn_limit: int = 2,
     ) -> None:
         self.runtime_factory = runtime_factory or _build_runtime
         self.runtime_closer = runtime_closer or close_shared_rag_runtime
         self.session_getter = session_getter
+        self.transcript_loader = transcript_loader
+        self.recent_transcript_limit = max(0, int(recent_transcript_limit))
+        self.memory_service = memory_service
+        self.memory_turn_limit = max(0, int(memory_turn_limit))
+        self.memory_search_turn_limit = max(0, int(memory_search_turn_limit))
         self._runtime = None
         self._lock = threading.RLock()
 
@@ -138,9 +150,11 @@ class SessionRagQueryService:
                 raise ValueError("LLM is not enabled. Set RAG_ENABLE_LLM=true and configure a provider first.")
 
         clean_query = self._clean_query_text(query_text)
+        conversation_history = self._get_memory_snapshot(session)
+        search_query = self._build_memory_augmented_query(clean_query, conversation_history)
         filters = self.build_scope_filters(session, resolved_scope)
         results = runtime.query_service.search(
-            clean_query,
+            search_query,
             top_k=resolved_top_k,
             embed_model=runtime.embed_model,
             filters=filters,
@@ -156,27 +170,39 @@ class SessionRagQueryService:
             with_llm=with_llm,
             citation_count=len(citations),
         )
+        metadata["memory_turn_count"] = len(conversation_history)
+        metadata["memory_scope"] = "lesson"
+        if search_query != clean_query:
+            metadata["memory_augmented_query"] = search_query
 
+        recent_transcripts: list[str] = []
         if not with_llm:
             metadata["answer_strategy"] = "retrieval_only"
-            return KnowledgeAnswer(
+            answer = KnowledgeAnswer(
                 query=clean_query,
                 answer=None,
                 results=results,
                 citations=citations,
                 metadata=metadata,
             )
+            self._remember_turn(session, clean_query, answer)
+            return answer
 
-        if not citations:
+        recent_transcripts = self._load_recent_transcript_texts(session, session_id=session_id)
+        metadata["recent_transcript_count"] = len(recent_transcripts)
+
+        if not citations and not recent_transcripts and not conversation_history:
             metadata["answer_strategy"] = "no_context"
             metadata["llm_used"] = False
-            return KnowledgeAnswer(
+            answer = KnowledgeAnswer(
                 query=clean_query,
                 answer=NO_CONTEXT_ANSWER,
                 results=results,
                 citations=citations,
                 metadata=metadata,
             )
+            self._remember_turn(session, clean_query, answer)
+            return answer
 
         try:
             answer_text = self._synthesize_answer(
@@ -184,29 +210,35 @@ class SessionRagQueryService:
                 query_text=clean_query,
                 scope=resolved_scope,
                 citations=citations,
+                recent_transcripts=recent_transcripts,
+                conversation_history=conversation_history,
             )
         except Exception as exc:
             metadata["answer_strategy"] = "retrieval_fallback"
             metadata["llm_fallback"] = True
             metadata["llm_used"] = False
             metadata["llm_error"] = str(exc)
-            return KnowledgeAnswer(
+            answer = KnowledgeAnswer(
                 query=clean_query,
                 answer=None,
                 results=results,
                 citations=citations,
                 metadata=metadata,
             )
+            self._remember_turn(session, clean_query, answer)
+            return answer
 
         metadata["answer_strategy"] = "llm_synthesized"
         metadata["llm_used"] = True
-        return KnowledgeAnswer(
+        answer = KnowledgeAnswer(
             query=clean_query,
             answer=answer_text,
             results=results,
             citations=citations,
             metadata=metadata,
         )
+        self._remember_turn(session, clean_query, answer)
+        return answer
 
     def resolve_scope(
         self,
@@ -347,7 +379,10 @@ class SessionRagQueryService:
             "llm_used": False,
             "llm_fallback": False,
             "citation_count": citation_count,
-            "answer_prompt_version": "cited-answer-v1",
+            "recent_transcript_count": 0,
+            "memory_turn_count": 0,
+            "memory_scope": "lesson",
+            "answer_prompt_version": "cited-answer-v3",
         }
 
     def _synthesize_answer(
@@ -357,11 +392,15 @@ class SessionRagQueryService:
         query_text: str,
         scope: QueryScope,
         citations: list[AnswerCitation],
+        recent_transcripts: list[str],
+        conversation_history: list[ChatMemoryTurn],
     ) -> str:
         prompt = build_rag_cited_answer_prompt(
             question=query_text,
             scope_label=_SCOPE_LABELS[scope],
             citations=citations,
+            recent_transcripts=recent_transcripts,
+            conversation_history=[(turn.user, turn.assistant) for turn in conversation_history],
         )
         response = llm.complete(prompt)
         answer_text = getattr(response, "text", None)
@@ -372,6 +411,93 @@ class SessionRagQueryService:
             raise ValueError("LLM returned an empty answer")
         return normalized
 
+    def _get_memory_snapshot(self, session: RealtimeSession) -> list[ChatMemoryTurn]:
+        if self.memory_service is None or self.memory_turn_limit <= 0:
+            return []
+        lesson_loader = getattr(self.memory_service, "list_recent_lesson_turns", None)
+        if callable(lesson_loader):
+            return lesson_loader(
+                course_id=session.course_id,
+                lesson_id=session.lesson_id,
+                limit=self.memory_turn_limit,
+            )
+        return self.memory_service.list_recent_turns(session.session_id, limit=self.memory_turn_limit)
+
+    def _remember_turn(self, session: RealtimeSession, query_text: str, answer: KnowledgeAnswer) -> None:
+        if self.memory_service is None or self.memory_turn_limit <= 0:
+            return
+        assistant_text = self._build_memory_assistant_text(answer)
+        self.memory_service.append_turn(
+            session=session,
+            user_text=query_text,
+            assistant_text=assistant_text,
+            answer_metadata=dict(answer.metadata),
+        )
+
+    @staticmethod
+    def _build_memory_assistant_text(answer: KnowledgeAnswer) -> str | None:
+        if answer.answer and answer.answer.strip():
+            return answer.answer
+
+        snippets = [
+            SessionRagQueryService._build_snippet(result.content, limit=180)
+            for result in answer.results[:2]
+            if result.content.strip()
+        ]
+        if not snippets:
+            return None
+        return "Retrieved context: " + " | ".join(snippets)
+
+    def _build_memory_augmented_query(
+        self,
+        query_text: str,
+        conversation_history: list[ChatMemoryTurn],
+    ) -> str:
+        if self.memory_search_turn_limit <= 0 or not conversation_history:
+            return query_text
+
+        selected_turns = conversation_history[-self.memory_search_turn_limit :]
+        blocks: list[str] = []
+        for turn in selected_turns:
+            user = " ".join(turn.user.strip().split())
+            assistant = " ".join((turn.assistant or "").strip().split())
+            if user:
+                blocks.append(f"Previous question: {user}")
+            if assistant:
+                blocks.append(f"Previous answer: {assistant}")
+        blocks.append(f"Current question:\n{query_text}")
+        return "\n".join(blocks)
+
+    def _load_recent_transcript_texts(
+        self,
+        session: RealtimeSession,
+        *,
+        session_id: str,
+    ) -> list[str]:
+        if self.recent_transcript_limit <= 0:
+            return []
+
+        items = self.transcript_loader(session, session_id)
+        texts: list[str] = []
+        for item in items:
+            text = self._extract_transcript_text(item)
+            if text:
+                texts.append(text)
+        return texts[-self.recent_transcript_limit:]
+
+    @staticmethod
+    def _extract_transcript_text(item: object) -> str:
+        if isinstance(item, TranscriptRecord):
+            text = item.content
+        elif isinstance(item, Mapping):
+            try:
+                text = TranscriptRecord.from_dict(item).content
+            except ValueError:
+                text = str(item.get("clean_text") or item.get("text") or "")
+        else:
+            text = ""
+        return " ".join(text.strip().split())
+
 
 def _metadata_str(metadata: dict[str, object], key: str) -> str | None:
     value = metadata.get(key)
@@ -381,4 +507,4 @@ def _metadata_str(metadata: dict[str, object], key: str) -> str | None:
     return text or None
 
 
-session_rag_query_service = SessionRagQueryService()
+session_rag_query_service = SessionRagQueryService(memory_service=chat_memory_service)

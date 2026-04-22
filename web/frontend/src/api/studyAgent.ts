@@ -1,5 +1,6 @@
 import type {
   CreateSessionPayload,
+  LessonHistoryResponse,
   QueryResponse,
   QuerySessionPayload,
   SessionInfo,
@@ -98,6 +99,39 @@ export function fetchSessionTranscripts(sessionId: string, baseUrl = defaultBack
       method: 'GET',
     },
     '获取转写记录失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonTranscripts(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const params = new URLSearchParams({
+    course_id: courseId,
+    lesson_id: lessonId,
+  })
+  return requestJson<TranscriptResponse>(
+    `/sessions/history/transcripts?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    '获取课程转写记录失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonHistory(limit = 50, baseUrl = defaultBackendBaseUrl) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  })
+  return requestJson<LessonHistoryResponse>(
+    `/sessions/history?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    '获取历史课程失败',
     baseUrl,
   )
 }

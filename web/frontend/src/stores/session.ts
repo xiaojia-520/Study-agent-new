@@ -5,6 +5,7 @@ import {
   buildWebSocketUrl,
   createSession as createSessionRequest,
   defaultBackendBaseUrl,
+  fetchLessonTranscripts,
   fetchSessionTranscripts,
 } from '../api/studyAgent'
 import type {
@@ -21,11 +22,27 @@ import type {
 const sessionModelOptions: ModelOption[] = [
   { label: 'paraformer-zh', value: 'paraformer-zh' },
   { label: 'paraformer-zh-streaming', value: 'paraformer-zh-streaming' },
+  { label: 'paraformer-zh-streaming-2pass', value: 'paraformer-zh-streaming-2pass' },
 ]
 
 const sessionClientId = 'web-frontend'
 const defaultSampleRate = 16000
 const defaultChannels = 1
+const lastLessonStorageKey = 'study-agent:last-active-lesson'
+
+type LessonSnapshotStatus = 'active' | 'stopped' | 'interrupted'
+
+interface LessonSnapshot {
+  session_id: string
+  course_id: string
+  lesson_id: string
+  subject?: string | null
+  model_name?: string | null
+  sample_rate: number
+  channels: number
+  status: LessonSnapshotStatus
+  updated_at: number
+}
 
 function toMilliseconds(timestamp?: number): number {
   if (!timestamp) {
@@ -48,6 +65,10 @@ function mapTranscriptItem(sessionId: string, item: TranscriptRecordItem): Trans
     chunkId,
     sourceType: item.source_type,
   }
+}
+
+function isModelKey(value: unknown): value is ModelKey {
+  return sessionModelOptions.some((option) => option.value === value)
 }
 
 export const useSessionStore = defineStore('session', () => {
@@ -97,6 +118,7 @@ export const useSessionStore = defineStore('session', () => {
   let processorNode: ScriptProcessorNode | null = null
   let muteGainNode: GainNode | null = null
   let lastSessionConfigSignature = ''
+  let skipResumePromptOnce = false
 
   function currentSessionConfigSignature(): string {
     return JSON.stringify({
@@ -105,6 +127,103 @@ export const useSessionStore = defineStore('session', () => {
       sampleRate: defaultSampleRate,
       channels: defaultChannels,
     })
+  }
+
+  function loadLastLessonSnapshot(): LessonSnapshot | null {
+    if (typeof window === 'undefined') {
+      return null
+    }
+
+    const raw = window.localStorage.getItem(lastLessonStorageKey)
+    if (!raw) {
+      return null
+    }
+
+    try {
+      const payload = JSON.parse(raw) as Partial<LessonSnapshot>
+      if (!payload.course_id || !payload.lesson_id || !payload.session_id) {
+        return null
+      }
+      return {
+        session_id: String(payload.session_id),
+        course_id: String(payload.course_id),
+        lesson_id: String(payload.lesson_id),
+        subject: payload.subject ? String(payload.subject) : null,
+        model_name: payload.model_name ? String(payload.model_name) : null,
+        sample_rate: Number(payload.sample_rate || defaultSampleRate),
+        channels: Number(payload.channels || defaultChannels),
+        status: payload.status || 'stopped',
+        updated_at: Number(payload.updated_at || Date.now()),
+      }
+    } catch {
+      return null
+    }
+  }
+
+  function saveLessonSnapshot(status: LessonSnapshotStatus): void {
+    if (typeof window === 'undefined' || !sessionInfo.value) {
+      return
+    }
+
+    const snapshot: LessonSnapshot = {
+      session_id: sessionInfo.value.session_id,
+      course_id: sessionInfo.value.course_id,
+      lesson_id: sessionInfo.value.lesson_id,
+      subject: sessionInfo.value.subject || subject.value.trim() || null,
+      model_name: sessionInfo.value.model_name || model.value,
+      sample_rate: sessionInfo.value.sample_rate || defaultSampleRate,
+      channels: sessionInfo.value.channels || defaultChannels,
+      status,
+      updated_at: Date.now(),
+    }
+    window.localStorage.setItem(lastLessonStorageKey, JSON.stringify(snapshot))
+  }
+
+  function chooseResumeSnapshot(): LessonSnapshot | null {
+    if (skipResumePromptOnce) {
+      skipResumePromptOnce = false
+      return null
+    }
+
+    const snapshot = loadLastLessonSnapshot()
+    if (!snapshot) {
+      return null
+    }
+
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+      return snapshot
+    }
+
+    const updatedAt = new Date(snapshot.updated_at).toLocaleString('zh-CN', { hour12: false })
+    const title = snapshot.subject || snapshot.course_id
+    const shouldResume = window.confirm(
+      [
+        `检测到上一次课程：${title}`,
+        `Lesson: ${snapshot.lesson_id}`,
+        `最后记录时间：${updatedAt}`,
+        '',
+        '是否继续上一次课程？',
+        '确定：继续同一节课；取消：开始新一节课。',
+      ].join('\n'),
+    )
+    return shouldResume ? snapshot : null
+  }
+
+  function applyResumeSnapshot(snapshot: LessonSnapshot): void {
+    if (snapshot.subject?.trim()) {
+      subject.value = snapshot.subject.trim()
+    }
+    if (isModelKey(snapshot.model_name)) {
+      model.value = snapshot.model_name
+    }
+  }
+
+  function resetSessionPanels(): void {
+    transcriptList.value = []
+    partialTranscript.value = ''
+    audioFrameCount.value = 0
+    audioPeak.value = 0
+    audioRms.value = 0
   }
 
   function updateSessionFromEvent(payload: RealtimeEvent): void {
@@ -129,6 +248,7 @@ export const useSessionStore = defineStore('session', () => {
     if (payload.model_name) {
       sessionInfo.value.model_name = payload.model_name
     }
+    saveLessonSnapshot(recording.value ? 'active' : 'stopped')
   }
 
   function appendTranscriptEntry(entry: TranscriptEntry): void {
@@ -212,9 +332,16 @@ export const useSessionStore = defineStore('session', () => {
       return
     }
 
-    const response = await fetchSessionTranscripts(sessionInfo.value.session_id, backendBaseUrl.value)
+    const response =
+      sessionInfo.value.course_id && sessionInfo.value.lesson_id
+        ? await fetchLessonTranscripts(
+            sessionInfo.value.course_id,
+            sessionInfo.value.lesson_id,
+            backendBaseUrl.value,
+          )
+        : await fetchSessionTranscripts(sessionInfo.value.session_id, backendBaseUrl.value)
     const mapped = response.items
-      .map((item) => mapTranscriptItem(response.session_id, item))
+      .map((item) => mapTranscriptItem(item.session_id || response.session_id || sessionInfo.value?.session_id || '', item))
       .filter((item): item is TranscriptEntry => item !== null)
       .sort((left, right) => left.timestamp - right.timestamp)
 
@@ -228,15 +355,18 @@ export const useSessionStore = defineStore('session', () => {
       return sessionInfo.value
     }
 
-    transcriptList.value = []
-    partialTranscript.value = ''
-    audioFrameCount.value = 0
-    audioPeak.value = 0
-    audioRms.value = 0
+    const resumeSnapshot = sessionInfo.value ? null : chooseResumeSnapshot()
+    if (resumeSnapshot) {
+      applyResumeSnapshot(resumeSnapshot)
+    }
+
+    resetSessionPanels()
 
     const response = await createSessionRequest(
       {
         subject: subject.value.trim() || undefined,
+        course_id: resumeSnapshot?.course_id,
+        lesson_id: resumeSnapshot?.lesson_id,
         client_id: sessionClientId,
         sample_rate: defaultSampleRate,
         channels: defaultChannels,
@@ -246,7 +376,8 @@ export const useSessionStore = defineStore('session', () => {
     )
 
     sessionInfo.value = response
-    lastSessionConfigSignature = signature
+    lastSessionConfigSignature = currentSessionConfigSignature()
+    saveLessonSnapshot('active')
     return response
   }
 
@@ -436,6 +567,7 @@ export const useSessionStore = defineStore('session', () => {
       muteGainNode = audioContext.createGain()
       muteGainNode.gain.value = 0
       recording.value = true
+      saveLessonSnapshot('active')
 
       processorNode.onaudioprocess = (audioEvent: AudioProcessingEvent) => {
         if (!recording.value || !websocket || websocket.readyState !== WebSocket.OPEN) {
@@ -463,6 +595,7 @@ export const useSessionStore = defineStore('session', () => {
       recording.value = false
       await releaseAudioResources()
       await disconnectWebSocket()
+      saveLessonSnapshot('interrupted')
       errorMessage.value = error instanceof Error ? error.message : '启动录音失败。'
     } finally {
       initializing.value = false
@@ -478,6 +611,8 @@ export const useSessionStore = defineStore('session', () => {
       await hydrateTranscriptsFromServer()
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '同步转写记录失败。'
+    } finally {
+      saveLessonSnapshot('stopped')
     }
   }
 
@@ -489,10 +624,31 @@ export const useSessionStore = defineStore('session', () => {
     await startRecording()
   }
 
+  async function startNewLesson(): Promise<void> {
+    if (recording.value) {
+      await stopRecording()
+    } else {
+      await disconnectWebSocket()
+    }
+
+    sessionInfo.value = null
+    lastSessionConfigSignature = ''
+    skipResumePromptOnce = true
+    resetSessionPanels()
+  }
+
   async function cleanup(): Promise<void> {
+    const wasRecording = recording.value
     recording.value = false
     await releaseAudioResources()
     await disconnectWebSocket()
+    saveLessonSnapshot(wasRecording ? 'interrupted' : 'stopped')
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', () => {
+      saveLessonSnapshot(recording.value ? 'interrupted' : 'stopped')
+    })
   }
 
   return {
@@ -517,6 +673,7 @@ export const useSessionStore = defineStore('session', () => {
     recording,
     sessionInfo,
     sessionStageLabel,
+    startNewLesson,
     startRecording,
     stopRecording,
     subject,

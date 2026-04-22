@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from src.core.knowledge.document_models import SearchResult
 from src.core.knowledge.query_filters import MetadataFilterSpec
 from web.backend.app.domain.session import RealtimeSession
+from web.backend.app.services.chat_memory_service import ChatMemoryTurn
 from web.backend.app.services.session_rag_query_service import QueryScope, SessionRagQueryService
 
 
@@ -30,6 +31,31 @@ class FakeLLM:
 class FailingLLM:
     def complete(self, prompt: str):
         raise RuntimeError("upstream llm timeout")
+
+
+class FakeChatMemoryService:
+    def __init__(self, turns: list[ChatMemoryTurn] | None = None) -> None:
+        self.turns = list(turns or [])
+        self.appended = []
+        self.lesson_calls = []
+
+    def list_recent_turns(self, session_id: str, *, limit: int = 6):
+        return self.turns[-limit:]
+
+    def list_recent_lesson_turns(self, *, course_id: str, lesson_id: str, limit: int = 6):
+        self.lesson_calls.append({"course_id": course_id, "lesson_id": lesson_id, "limit": limit})
+        return self.turns[-limit:]
+
+    def append_turn(self, *, session, user_text: str, assistant_text: str | None, answer_metadata=None) -> None:
+        self.appended.append(
+            {
+                "session_id": session.session_id,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+                "answer_metadata": dict(answer_metadata or {}),
+            }
+        )
+        self.turns.append(ChatMemoryTurn(user=user_text, assistant=assistant_text, created_at=999))
 
 
 class SessionRagQueryServiceTests(unittest.TestCase):
@@ -200,6 +226,190 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         self.assertIn("[1] doc_id=doc-1", fake_llm.prompts[0])
         self.assertIn("[2] doc_id=doc-2", fake_llm.prompts[0])
 
+    def test_query_session_includes_recent_transcripts_in_llm_prompt(self) -> None:
+        fake_query_service = FakeQueryService(
+            [
+                SearchResult(
+                    doc_id="doc-1",
+                    content="A limit describes the value a function approaches near a point.",
+                    score=0.95,
+                    session_id="session-a",
+                    subject="math",
+                    source_type="realtime",
+                    metadata={"course_id": "math-course", "lesson_id": "math-course-lesson-1"},
+                )
+            ]
+        )
+        fake_llm = FakeLLM("A limit is the value a function approaches near a point [1].")
+        transcript_items = [
+            self._transcript_item(chunk_id=1, text="Old warmup transcript."),
+            self._transcript_item(chunk_id=2, text="Recent context one."),
+            self._transcript_item(chunk_id=3, text="Recent context two."),
+            self._transcript_item(chunk_id=4, text="Recent context three."),
+        ]
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: transcript_items,
+            recent_transcript_limit=3,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What is a limit?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertEqual(answer.metadata["recent_transcript_count"], 3)
+        self.assertIn("Recent transcript context:", prompt)
+        self.assertNotIn("Old warmup transcript.", prompt)
+        self.assertIn("R1. Recent context one.", prompt)
+        self.assertIn("R2. Recent context two.", prompt)
+        self.assertIn("R3. Recent context three.", prompt)
+
+    def test_query_session_can_use_recent_transcripts_when_retrieval_has_no_results(self) -> None:
+        fake_query_service = FakeQueryService([])
+        fake_llm = FakeLLM("Based on the recent transcript, limits were introduced as approach values.")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [
+                self._transcript_item(chunk_id=1, text="Limits were introduced as approach values.")
+            ],
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What did we just introduce?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+        )
+
+        self.assertEqual(answer.answer, "Based on the recent transcript, limits were introduced as approach values.")
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_synthesized")
+        self.assertEqual(answer.metadata["citation_count"], 0)
+        self.assertEqual(answer.metadata["recent_transcript_count"], 1)
+        self.assertIn("[no context retrieved]", fake_llm.prompts[0])
+        self.assertIn("R1. Limits were introduced as approach values.", fake_llm.prompts[0])
+
+    def test_query_session_uses_conversation_memory_for_follow_up(self) -> None:
+        fake_query_service = FakeQueryService(
+            [
+                SearchResult(
+                    doc_id="doc-1",
+                    content="A limit describes approach behavior; a derivative describes instantaneous rate.",
+                    score=0.91,
+                    session_id="session-a",
+                    subject="math",
+                    source_type="realtime",
+                    metadata={"course_id": "math-course", "lesson_id": "math-course-lesson-1"},
+                )
+            ]
+        )
+        fake_llm = FakeLLM("The derivative is about instantaneous rate, while the limit is about approach [1].")
+        fake_memory = FakeChatMemoryService(
+            [
+                ChatMemoryTurn(
+                    user="What is a limit?",
+                    assistant="A limit describes the value a function approaches.",
+                    created_at=100,
+                )
+            ]
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            memory_service=fake_memory,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="How is that different from a derivative?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+        )
+
+        search_query = fake_query_service.calls[0][0]
+        prompt = fake_llm.prompts[0]
+        self.assertIn("Previous question: What is a limit?", search_query)
+        self.assertIn("Previous answer: A limit describes the value a function approaches.", search_query)
+        self.assertIn("Current question:\nHow is that different from a derivative?", search_query)
+        self.assertIn("Conversation history:", prompt)
+        self.assertIn("User: What is a limit?", prompt)
+        self.assertIn("Assistant: A limit describes the value a function approaches.", prompt)
+        self.assertEqual(
+            fake_memory.lesson_calls[0],
+            {"course_id": "math-course", "lesson_id": "math-course-lesson-1", "limit": 6},
+        )
+        self.assertEqual(answer.metadata["memory_turn_count"], 1)
+        self.assertEqual(answer.metadata["memory_scope"], "lesson")
+        self.assertEqual(answer.metadata["answer_prompt_version"], "cited-answer-v3")
+        self.assertEqual(fake_memory.appended[0]["user_text"], "How is that different from a derivative?")
+        self.assertEqual(
+            fake_memory.appended[0]["assistant_text"],
+            "The derivative is about instantaneous rate, while the limit is about approach [1].",
+        )
+
+    def test_query_session_can_answer_from_conversation_memory_without_retrieval(self) -> None:
+        fake_query_service = FakeQueryService([])
+        fake_llm = FakeLLM("It refers to the limit we discussed in the previous turn.")
+        fake_memory = FakeChatMemoryService(
+            [
+                ChatMemoryTurn(
+                    user="What is a limit?",
+                    assistant="A limit describes the value a function approaches.",
+                    created_at=100,
+                )
+            ]
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [],
+            memory_service=fake_memory,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What does that refer to?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+        )
+
+        self.assertEqual(answer.answer, "It refers to the limit we discussed in the previous turn.")
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_synthesized")
+        self.assertEqual(answer.metadata["citation_count"], 0)
+        self.assertEqual(answer.metadata["recent_transcript_count"], 0)
+        self.assertEqual(answer.metadata["memory_turn_count"], 1)
+        self.assertIn("[no context retrieved]", fake_llm.prompts[0])
+        self.assertIn("User: What is a limit?", fake_llm.prompts[0])
+
     def test_query_session_falls_back_when_llm_synthesis_fails(self) -> None:
         fake_query_service = FakeQueryService(
             [
@@ -266,6 +476,24 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             created_at=100,
             updated_at=100,
         )
+
+    @staticmethod
+    def _transcript_item(*, chunk_id: int, text: str) -> dict[str, object]:
+        return {
+            "session_id": "session-a",
+            "storage_id": "session-a-store",
+            "course_id": "math-course",
+            "lesson_id": "math-course-lesson-1",
+            "chunk_id": chunk_id,
+            "subject": "math",
+            "source_type": "realtime",
+            "source_file": None,
+            "start_ms": None,
+            "end_ms": None,
+            "text": text,
+            "clean_text": text,
+            "created_at": 100 + chunk_id,
+        }
 
 
 if __name__ == "__main__":

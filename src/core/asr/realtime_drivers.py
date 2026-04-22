@@ -186,6 +186,83 @@ class ParaformerZhStreamingDriver(RealtimeASRDriver):
         logger.info("VAD end -> paraformer-zh-streaming")
 
 
+class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
+    def __init__(
+        self,
+        asr: ASRLike,
+        *,
+        stride: int,
+        tail_keep: int,
+        partial_log_interval: float,
+        on_partial: TextCallback = None,
+        on_final: TextCallback = None,
+    ) -> None:
+        super().__init__(
+            asr=asr,
+            stride=stride,
+            tail_keep=tail_keep,
+            partial_log_interval=partial_log_interval,
+            on_partial=on_partial,
+            on_final=on_final,
+        )
+        self.full_buf = AudioChunkBuffer()
+
+    def on_start(self) -> None:
+        self.buf.clear()
+        self.full_buf.clear()
+        self.asr.reset_stream()
+        self._last_partial_text = ""
+        self._last_partial_ts = 0.0
+        logger.info("VAD start -> paraformer-zh-streaming-2pass")
+
+    def on_chunk(self, chunk: np.ndarray) -> None:
+        self.full_buf.append(chunk)
+        super().on_chunk(chunk)
+
+    def on_end(self) -> None:
+        full_audio = self.full_buf.pop_all()
+        streaming_final = self._finish_streaming_pass()
+        second_pass_text = self._run_second_pass(full_audio)
+        final_text = second_pass_text or streaming_final
+
+        if final_text:
+            logger.info(f"ASR(2pass-final): {final_text}")
+            if self.on_final:
+                try:
+                    self.on_final(final_text)
+                except Exception as exc:
+                    logger.error(f"final callback failed: {exc}")
+
+        self.buf.clear()
+        self.full_buf.clear()
+        logger.info("VAD end -> paraformer-zh-streaming-2pass")
+
+    def _finish_streaming_pass(self) -> str:
+        remaining = self.buf.pop_all()
+        if remaining.size <= 0:
+            return ""
+        try:
+            final_text = self.asr.transcribe_stream(remaining, is_final=True)
+            if final_text:
+                logger.info(f"ASR(2pass-online-final): {final_text}")
+            return final_text or ""
+        except Exception as exc:
+            logger.error(f"2pass online final failed: {exc}")
+            return ""
+
+    def _run_second_pass(self, full_audio: np.ndarray) -> str:
+        if full_audio.size <= 0:
+            return ""
+        try:
+            final_text = self.asr.transcribe_offline_with_punc(full_audio)
+            if final_text:
+                logger.info(f"ASR(2pass-offline): {final_text}")
+            return final_text or ""
+        except Exception as exc:
+            logger.error(f"2pass offline correction failed: {exc}")
+            return ""
+
+
 def _build_paraformer_zh_driver(
     model: RealtimeASRModel,
     asr: ASRLike,
@@ -221,9 +298,31 @@ def _build_paraformer_zh_streaming_driver(
     )
 
 
+def _build_paraformer_zh_streaming_2pass_driver(
+    model: RealtimeASRModel,
+    asr: ASRLike,
+    *,
+    stride: int,
+    tail_keep: int,
+    partial_log_interval: float,
+    on_partial: TextCallback = None,
+    on_final: TextCallback = None,
+) -> RealtimeASRDriver:
+    del model
+    return ParaformerZhStreaming2PassDriver(
+        asr=asr,
+        stride=stride,
+        tail_keep=tail_keep,
+        partial_log_interval=partial_log_interval,
+        on_partial=on_partial,
+        on_final=on_final,
+    )
+
+
 _DRIVER_BUILDERS: dict[str, Callable[..., RealtimeASRDriver]] = {
     "paraformer-zh": _build_paraformer_zh_driver,
     "paraformer-zh-streaming": _build_paraformer_zh_streaming_driver,
+    "paraformer-zh-streaming-2pass": _build_paraformer_zh_streaming_2pass_driver,
 }
 
 

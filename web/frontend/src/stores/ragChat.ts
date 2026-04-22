@@ -69,7 +69,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
   const currentQuestion = ref('')
   const sending = ref(false)
   const errorMessage = ref('')
-  const queryScope = ref<QueryScope>('current_lesson')
+  const queryScope = ref<QueryScope>('auto')
   const topK = ref(5)
   const lastResponse = ref<QueryResponse | null>(null)
 

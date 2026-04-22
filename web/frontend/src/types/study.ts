@@ -1,4 +1,4 @@
-export type ModelKey = 'paraformer-zh' | 'paraformer-zh-streaming'
+export type ModelKey = 'paraformer-zh' | 'paraformer-zh-streaming' | 'paraformer-zh-streaming-2pass'
 export type QueryScope = 'auto' | 'current_lesson' | 'course_all' | 'course_history' | 'global'
 export type WebSocketState = 'closed' | 'connecting' | 'open'
 
@@ -44,6 +44,9 @@ export interface TranscriptEntry {
 }
 
 export interface TranscriptRecordItem {
+  session_id?: string
+  course_id?: string
+  lesson_id?: string
   chunk_id?: number
   text?: string
   clean_text?: string
@@ -53,9 +56,26 @@ export interface TranscriptRecordItem {
 }
 
 export interface TranscriptResponse {
-  session_id: string
+  session_id?: string
+  course_id?: string
+  lesson_id?: string
   count: number
   items: TranscriptRecordItem[]
+}
+
+export interface LessonHistoryItem {
+  course_id?: string | null
+  lesson_id?: string | null
+  first_at: number
+  last_at: number
+  message_count: number
+  session_count: number
+  last_session_id?: string | null
+}
+
+export interface LessonHistoryResponse {
+  count: number
+  items: LessonHistoryItem[]
 }
 
 export interface RealtimeEvent {

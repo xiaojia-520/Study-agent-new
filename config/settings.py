@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
     TRANSCRIPT_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "transcripts")
     QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
+    SQLITE_DB_PATH: Path = DATA_DIR / "study_agent.sqlite3"
 
     MODEL_BASE_DIR: Path = _ensure_dir(BASE_DIR / "models")
     ASR_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "asr")
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     ASR_MODEL_PATH: dict[str, str] = {
         "paraformer-zh": "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
         "paraformer-zh-streaming": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
+        "paraformer-zh-streaming-2pass": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
     }
     ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh"
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR

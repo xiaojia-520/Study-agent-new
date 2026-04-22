@@ -17,6 +17,7 @@ class ModelHub:
 
     def __init__(self):
         self.funasr_model = None
+        self.funasr_2pass_model = None
         self._asr_lock = threading.Lock()
 
     def __new__(cls):

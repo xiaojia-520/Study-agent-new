@@ -125,5 +125,14 @@ onMounted(() => {
     >
       {{ recordButtonBusy ? '准备中...' : recording ? '停止录音' : '开始录音' }}
     </button>
+
+    <button
+      type="button"
+      class="mt-2 inline-flex items-center justify-center rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.14)] bg-[rgb(var(--bg-muted))] px-4 py-2.5 text-sm font-semibold text-[rgb(var(--text-main))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+      :disabled="recordButtonBusy"
+      @click="sessionStore.startNewLesson"
+    >
+      新建一节课
+    </button>
   </section>
 </template>

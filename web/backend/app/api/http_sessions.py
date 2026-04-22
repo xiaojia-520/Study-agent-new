@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.core.asr.realtime_models import resolve_realtime_asr_model
+from web.backend.app.services.chat_memory_service import chat_memory_service
 from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
 from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
 from web.backend.app.services.session_rag_query_service import QueryScope, session_rag_query_service
@@ -98,6 +99,48 @@ async def list_sessions():
     }
 
 
+@router.get("/history")
+async def list_lesson_history(limit: int = Query(default=50, ge=1, le=200)):
+    items = chat_memory_service.list_lesson_summaries(limit=limit)
+    return {
+        "count": len(items),
+        "items": [asdict(item) for item in items],
+    }
+
+
+@router.get("/history/messages")
+async def get_lesson_messages(
+    course_id: str = Query(..., min_length=1),
+    lesson_id: str = Query(..., min_length=1),
+    limit: int | None = Query(default=None, ge=1, le=500),
+):
+    items = chat_memory_service.list_lesson_messages(
+        course_id=course_id,
+        lesson_id=lesson_id,
+        limit=limit,
+    )
+    return {
+        "course_id": course_id,
+        "lesson_id": lesson_id,
+        "count": len(items),
+        "items": [asdict(item) for item in items],
+    }
+
+
+@router.get("/history/transcripts")
+async def get_lesson_transcripts(
+    course_id: str = Query(..., min_length=1),
+    lesson_id: str = Query(..., min_length=1),
+):
+    items = transcript_service.list_lesson_transcripts(course_id=course_id, lesson_id=lesson_id)
+    return {
+        "course_id": course_id,
+        "lesson_id": lesson_id,
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/{session_id}/transcripts")
 async def get_session_transcripts(session_id: str):
     session = session_manager.get_session(session_id)
@@ -106,6 +149,16 @@ async def get_session_transcripts(session_id: str):
         "session_id": session_id,
         "count": len(items),
         "items": items,
+    }
+
+
+@router.get("/{session_id}/messages")
+async def get_session_messages(session_id: str):
+    items = chat_memory_service.list_session_messages(session_id)
+    return {
+        "session_id": session_id,
+        "count": len(items),
+        "items": [asdict(item) for item in items],
     }
 
 

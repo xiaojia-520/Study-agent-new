@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { useSessionStore } from '../stores/session'
@@ -26,9 +27,18 @@ const sessionCode = computed(() => currentSessionId.value.slice(0, 8) || '未创
       </div>
 
       <div class="flex items-center gap-2 text-sm text-[rgb(var(--text-subtle))]">
-        <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1.5">
-          {{ backendBaseUrl }}
-        </span>
+        <RouterLink
+          to="/history"
+          class="rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95"
+        >
+          历史回顾
+        </RouterLink>
+        <RouterLink
+          to="/workshop"
+          class="rounded-full bg-[rgb(var(--accent))] px-3 py-1.5 font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95"
+        >
+          学习工坊
+        </RouterLink>
         <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1.5">
           {{ transcriptCount }} 条转写
         </span>
