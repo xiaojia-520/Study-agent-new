@@ -38,6 +38,112 @@ class SQLiteStore:
                 ON chat_messages(session_id, created_at, id)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transcript_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    storage_id TEXT,
+                    course_id TEXT,
+                    lesson_id TEXT,
+                    chunk_id INTEGER NOT NULL,
+                    subject TEXT,
+                    source_type TEXT NOT NULL,
+                    source_file TEXT,
+                    start_ms INTEGER,
+                    end_ms INTEGER,
+                    text TEXT NOT NULL,
+                    clean_text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    metadata_json TEXT,
+                    UNIQUE(session_id, chunk_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lesson_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset_id TEXT NOT NULL UNIQUE,
+                    session_id TEXT NOT NULL,
+                    course_id TEXT,
+                    lesson_id TEXT,
+                    subject TEXT,
+                    file_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    batch_id TEXT,
+                    mineru_state TEXT,
+                    full_zip_url TEXT,
+                    result_dir TEXT,
+                    markdown_path TEXT,
+                    record_count INTEGER NOT NULL DEFAULT 0,
+                    indexed_at INTEGER,
+                    error_message TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    metadata_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_lesson_assets_session_created
+                ON lesson_assets(session_id, created_at, id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_lesson_assets_lesson_created
+                ON lesson_assets(course_id, lesson_id, created_at, id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_transcript_records_lesson_created
+                ON transcript_records(course_id, lesson_id, created_at, id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_transcript_records_session_created
+                ON transcript_records(session_id, created_at, id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS refined_transcript_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_record_id INTEGER NOT NULL,
+                    session_id TEXT NOT NULL,
+                    course_id TEXT,
+                    lesson_id TEXT,
+                    chunk_id INTEGER NOT NULL,
+                    original_text TEXT NOT NULL,
+                    refined_text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    refined_at INTEGER NOT NULL,
+                    model_name TEXT,
+                    metadata_json TEXT,
+                    UNIQUE(source_record_id),
+                    FOREIGN KEY(source_record_id) REFERENCES transcript_records(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_refined_transcript_records_lesson_created
+                ON refined_transcript_records(course_id, lesson_id, created_at, id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_refined_transcript_records_session_created
+                ON refined_transcript_records(session_id, created_at, id)
+                """
+            )
             conn.commit()
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> int:

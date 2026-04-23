@@ -1,8 +1,12 @@
 import type {
   CreateSessionPayload,
+  LessonAssetListResponse,
+  LessonAssetResponse,
   LessonHistoryResponse,
+  LessonMessagesResponse,
   QueryResponse,
   QuerySessionPayload,
+  RefinedTranscriptResponse,
   SessionInfo,
   TranscriptResponse,
 } from '../types/study'
@@ -63,7 +67,7 @@ async function requestJson<T>(
   baseUrl = defaultBackendBaseUrl,
 ): Promise<T> {
   const headers = new Headers(init.headers ?? {})
-  if (init.body && !headers.has('Content-Type')) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
@@ -103,6 +107,42 @@ export function fetchSessionTranscripts(sessionId: string, baseUrl = defaultBack
   )
 }
 
+export function uploadSessionAsset(sessionId: string, file: File, baseUrl = defaultBackendBaseUrl) {
+  const body = new FormData()
+  body.append('file', file)
+  return requestJson<LessonAssetResponse>(
+    `/sessions/${sessionId}/assets`,
+    {
+      method: 'POST',
+      body,
+    },
+    '上传课堂素材失败',
+    baseUrl,
+  )
+}
+
+export function fetchSessionAssets(sessionId: string, baseUrl = defaultBackendBaseUrl) {
+  return requestJson<LessonAssetListResponse>(
+    `/sessions/${sessionId}/assets`,
+    {
+      method: 'GET',
+    },
+    '获取课堂素材失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonAsset(assetId: string, baseUrl = defaultBackendBaseUrl) {
+  return requestJson<LessonAssetResponse>(
+    `/sessions/assets/${assetId}`,
+    {
+      method: 'GET',
+    },
+    '获取素材状态失败',
+    baseUrl,
+  )
+}
+
 export function fetchLessonTranscripts(
   courseId: string,
   lessonId: string,
@@ -122,6 +162,25 @@ export function fetchLessonTranscripts(
   )
 }
 
+export function fetchRefinedLessonTranscripts(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const params = new URLSearchParams({
+    course_id: courseId,
+    lesson_id: lessonId,
+  })
+  return requestJson<RefinedTranscriptResponse>(
+    `/sessions/history/refined-transcripts?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    'Fetch refined lesson transcripts failed',
+    baseUrl,
+  )
+}
+
 export function fetchLessonHistory(limit = 50, baseUrl = defaultBackendBaseUrl) {
   const params = new URLSearchParams({
     limit: String(limit),
@@ -132,6 +191,25 @@ export function fetchLessonHistory(limit = 50, baseUrl = defaultBackendBaseUrl) 
       method: 'GET',
     },
     '获取历史课程失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonMessages(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const params = new URLSearchParams({
+    course_id: courseId,
+    lesson_id: lessonId,
+  })
+  return requestJson<LessonMessagesResponse>(
+    `/sessions/history/messages?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    '获取历史问答失败',
     baseUrl,
   )
 }

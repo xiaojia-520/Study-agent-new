@@ -44,6 +44,7 @@ export interface TranscriptEntry {
 }
 
 export interface TranscriptRecordItem {
+  id?: number
   session_id?: string
   course_id?: string
   lesson_id?: string
@@ -63,12 +64,35 @@ export interface TranscriptResponse {
   items: TranscriptRecordItem[]
 }
 
+export interface RefinedTranscriptRecordItem {
+  id: number
+  source_record_id: number
+  session_id: string
+  course_id?: string | null
+  lesson_id?: string | null
+  chunk_id: number
+  original_text: string
+  refined_text: string
+  created_at: number
+  refined_at: number
+  model_name?: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface RefinedTranscriptResponse {
+  course_id?: string
+  lesson_id?: string
+  count: number
+  items: RefinedTranscriptRecordItem[]
+}
+
 export interface LessonHistoryItem {
   course_id?: string | null
   lesson_id?: string | null
   first_at: number
   last_at: number
   message_count: number
+  transcript_count?: number
   session_count: number
   last_session_id?: string | null
 }
@@ -76,6 +100,57 @@ export interface LessonHistoryItem {
 export interface LessonHistoryResponse {
   count: number
   items: LessonHistoryItem[]
+}
+
+export interface LessonMessageItem {
+  id: number
+  session_id: string
+  course_id?: string | null
+  lesson_id?: string | null
+  role: ChatRole
+  content: string
+  created_at: number
+  metadata: Record<string, unknown>
+}
+
+export interface LessonMessagesResponse {
+  course_id: string
+  lesson_id: string
+  count: number
+  items: LessonMessageItem[]
+}
+
+export interface LessonAssetItem {
+  id: number
+  asset_id: string
+  session_id: string
+  course_id?: string | null
+  lesson_id?: string | null
+  subject?: string | null
+  file_name: string
+  file_size: number
+  media_type: string
+  status: string
+  batch_id?: string | null
+  mineru_state?: string | null
+  full_zip_url?: string | null
+  markdown_path?: string | null
+  record_count: number
+  indexed_at?: number | null
+  error_message?: string | null
+  created_at: number
+  updated_at: number
+  metadata: Record<string, unknown>
+}
+
+export interface LessonAssetResponse {
+  item: LessonAssetItem
+}
+
+export interface LessonAssetListResponse {
+  session_id: string
+  count: number
+  items: LessonAssetItem[]
 }
 
 export interface RealtimeEvent {

@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 
 import HeaderBar from '../components/HeaderBar.vue'
 import LLM from '../components/LLM.vue'
+import RefineStatusToast from '../components/RefineStatusToast.vue'
 import Retrieval from '../components/Retrieval.vue'
 import Session from '../components/Session.vue'
 import TranscriptOutput from '../components/TranscriptOutput.vue'
@@ -70,6 +71,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex h-screen flex-col overflow-hidden bg-[rgb(var(--bg-base))]">
     <HeaderBar class="shrink-0" />
+    <RefineStatusToast />
 
     <main class="flex-1 overflow-hidden">
       <div
@@ -81,11 +83,11 @@ onBeforeUnmount(() => {
           :style="{ width: `calc(${leftWidth}% - ${dividerWidthOffset})` }"
         >
           <div class="basis-[50%] min-h-0">
-            <Session class="h-full" />
+            <TranscriptOutput class="h-full" />
           </div>
 
           <div class="min-h-0 flex-1">
-            <TranscriptOutput class="h-full" />
+            <Session class="h-full" />
           </div>
         </div>
 

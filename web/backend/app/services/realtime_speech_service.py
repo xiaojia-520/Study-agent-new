@@ -12,6 +12,7 @@ from src.application.speech_pipeline import WebSpeechPipeline
 from web.backend.app.domain.session import RealtimeSession
 from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
 from web.backend.app.services.session_manager import session_manager
+from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.transcript_service import transcript_service
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,7 @@ class RealtimeSpeechService:
         session = session_manager.mark_disconnected(session_id)
         if session is None:
             return None
+        session_transcript_refine_service.enqueue_session(session_id)
         return self.make_event_payload(
             session_id=session_id,
             seq=session_manager.next_event_seq(session_id),

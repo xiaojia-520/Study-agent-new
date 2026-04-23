@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
     TRANSCRIPT_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "transcripts")
+    ASSET_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "assets")
+    MINERU_RESULT_DIR: Path = _ensure_dir(DATA_DIR / "mineru_results")
     QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
     SQLITE_DB_PATH: Path = DATA_DIR / "study_agent.sqlite3"
 
@@ -71,6 +73,21 @@ class Settings(BaseSettings):
     RAG_LLM_TEMPERATURE: float = 0.1
     RAG_LLM_MAX_TOKENS: int | None = 512
     RAG_LLM_TIMEOUT: float = 60.0
+
+    MINERU_API_TOKEN: str = ""
+    MINERU_BASE_URL: str = "https://mineru.net"
+    MINERU_MODEL_VERSION: str = "vlm"
+    MINERU_LANGUAGE: str = "ch"
+    MINERU_ENABLE_FORMULA: bool = True
+    MINERU_ENABLE_TABLE: bool = True
+    MINERU_IS_OCR: bool = False
+    MINERU_POLL_INTERVAL_SECONDS: float = 3.0
+    MINERU_POLL_TIMEOUT_SECONDS: float = 600.0
+    MINERU_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    MINERU_UPLOAD_TIMEOUT_SECONDS: float = 300.0
+    MINERU_DOWNLOAD_TIMEOUT_SECONDS: float = 300.0
+    MINERU_AUTO_INDEX_ENABLED: bool = True
+    MINERU_MAX_UPLOAD_BYTES: int = 200 * 1024 * 1024
 
     class Config:
         case_sensitive = True

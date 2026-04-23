@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Iterable
+import json
+from typing import Iterable, Mapping, Sequence
 
 from src.core.knowledge.document_models import AnswerCitation
 
@@ -230,5 +231,54 @@ def build_lesson_quiz_merge_prompt(
             LESSON_QUIZ_JSON_SCHEMA,
             "Chunk quizzes JSON:",
             chunk_quizzes_json.strip(),
+        ]
+    )
+
+
+TRANSCRIPT_REFINE_JSON_SCHEMA = """[
+  {"source_record_id": 123, "refined_text": "refined transcript for this record"}
+]"""
+
+TRANSCRIPT_REFINE_SYSTEM_PROMPT = """You are an ASR transcript editor for a study app.
+
+Rules:
+- Use only the provided transcript text.
+- Fix obvious ASR recognition errors, missing punctuation, spacing, and broken sentences.
+- Keep the original meaning, order, speaker intent, and technical terms.
+- Do not summarize, answer questions, add explanations, or introduce new facts.
+- Preserve one output item for each input record.
+- Prefer the same language as the transcript. Default to Simplified Chinese when unclear.
+- Return valid JSON only. Do not wrap it in markdown fences.
+"""
+
+
+def build_transcript_refine_prompt(
+    *,
+    transcript_records: Sequence[Mapping[str, object]],
+    batch_index: int,
+    batch_count: int,
+) -> str:
+    records = []
+    for record in transcript_records:
+        source_record_id = record.get("id") or record.get("source_record_id")
+        text = " ".join(str(record.get("clean_text") or record.get("text") or "").strip().split())
+        if not source_record_id or not text:
+            continue
+        records.append(
+            {
+                "source_record_id": source_record_id,
+                "chunk_id": record.get("chunk_id"),
+                "text": text,
+            }
+        )
+
+    return "\n\n".join(
+        [
+            TRANSCRIPT_REFINE_SYSTEM_PROMPT.strip(),
+            f"Transcript batch: {batch_index}/{batch_count}",
+            "JSON schema:",
+            TRANSCRIPT_REFINE_JSON_SCHEMA,
+            "Input records JSON:",
+            json.dumps(records, ensure_ascii=False, indent=2),
         ]
     )

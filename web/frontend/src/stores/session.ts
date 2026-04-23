@@ -5,10 +5,14 @@ import {
   buildWebSocketUrl,
   createSession as createSessionRequest,
   defaultBackendBaseUrl,
+  fetchLessonAsset,
   fetchLessonTranscripts,
+  fetchSessionAssets,
   fetchSessionTranscripts,
+  uploadSessionAsset,
 } from '../api/studyAgent'
 import type {
+  LessonAssetItem,
   MicrophoneOption,
   ModelKey,
   ModelOption,
@@ -31,6 +35,7 @@ const defaultChannels = 1
 const lastLessonStorageKey = 'study-agent:last-active-lesson'
 
 type LessonSnapshotStatus = 'active' | 'stopped' | 'interrupted'
+type RefineStatusToastKind = 'syncing' | 'processing' | 'error'
 
 interface LessonSnapshot {
   session_id: string
@@ -42,6 +47,15 @@ interface LessonSnapshot {
   channels: number
   status: LessonSnapshotStatus
   updated_at: number
+}
+
+interface RefineStatusToast {
+  id: number
+  visible: boolean
+  kind: RefineStatusToastKind
+  title: string
+  message: string
+  detail?: string
 }
 
 function toMilliseconds(timestamp?: number): number {
@@ -67,10 +81,6 @@ function mapTranscriptItem(sessionId: string, item: TranscriptRecordItem): Trans
   }
 }
 
-function isModelKey(value: unknown): value is ModelKey {
-  return sessionModelOptions.some((option) => option.value === value)
-}
-
 export const useSessionStore = defineStore('session', () => {
   const backendBaseUrl = ref(defaultBackendBaseUrl)
   const subject = ref('Web 开发课堂')
@@ -89,8 +99,13 @@ export const useSessionStore = defineStore('session', () => {
   const audioFrameCount = ref(0)
   const audioPeak = ref(0)
   const audioRms = ref(0)
+  const refineStatusToast = ref<RefineStatusToast | null>(null)
+  const assetList = ref<LessonAssetItem[]>([])
+  const assetUploading = ref(false)
+  const assetErrorMessage = ref('')
 
   const transcriptCount = computed(() => transcriptList.value.length)
+  const assetCount = computed(() => assetList.value.length)
   const currentSessionId = computed(() => sessionInfo.value?.session_id || '')
   const currentCourseId = computed(() => sessionInfo.value?.course_id || '')
   const currentLessonId = computed(() => sessionInfo.value?.lesson_id || '')
@@ -118,12 +133,21 @@ export const useSessionStore = defineStore('session', () => {
   let processorNode: ScriptProcessorNode | null = null
   let muteGainNode: GainNode | null = null
   let lastSessionConfigSignature = ''
-  let skipResumePromptOnce = false
+  let lastLessonConfigSignature = ''
+  let promptBeforeNextStart = false
 
   function currentSessionConfigSignature(): string {
     return JSON.stringify({
       subject: subject.value.trim(),
       model: model.value,
+      sampleRate: defaultSampleRate,
+      channels: defaultChannels,
+    })
+  }
+
+  function currentLessonConfigSignature(): string {
+    return JSON.stringify({
+      subject: subject.value.trim(),
       sampleRate: defaultSampleRate,
       channels: defaultChannels,
     })
@@ -179,24 +203,35 @@ export const useSessionStore = defineStore('session', () => {
     window.localStorage.setItem(lastLessonStorageKey, JSON.stringify(snapshot))
   }
 
-  function chooseResumeSnapshot(): LessonSnapshot | null {
-    if (skipResumePromptOnce) {
-      skipResumePromptOnce = false
+  function buildCurrentLessonSnapshot(): LessonSnapshot | null {
+    if (!sessionInfo.value) {
       return null
     }
+    return {
+      session_id: sessionInfo.value.session_id,
+      course_id: sessionInfo.value.course_id,
+      lesson_id: sessionInfo.value.lesson_id,
+      subject: sessionInfo.value.subject || subject.value.trim() || null,
+      model_name: sessionInfo.value.model_name || model.value,
+      sample_rate: sessionInfo.value.sample_rate || defaultSampleRate,
+      channels: sessionInfo.value.channels || defaultChannels,
+      status: recording.value ? 'active' : 'stopped',
+      updated_at: Date.now(),
+    }
+  }
 
-    const snapshot = loadLastLessonSnapshot()
+  function confirmContinueLesson(snapshot: LessonSnapshot): boolean {
     if (!snapshot) {
-      return null
+      return false
     }
 
     if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-      return snapshot
+      return true
     }
 
     const updatedAt = new Date(snapshot.updated_at).toLocaleString('zh-CN', { hour12: false })
     const title = snapshot.subject || snapshot.course_id
-    const shouldResume = window.confirm(
+    return window.confirm(
       [
         `检测到上一次课程：${title}`,
         `Lesson: ${snapshot.lesson_id}`,
@@ -206,24 +241,51 @@ export const useSessionStore = defineStore('session', () => {
         '确定：继续同一节课；取消：开始新一节课。',
       ].join('\n'),
     )
-    return shouldResume ? snapshot : null
+  }
+
+  function chooseResumeSnapshot(): LessonSnapshot | null {
+    const snapshot = loadLastLessonSnapshot()
+    if (!snapshot) {
+      return null
+    }
+    return confirmContinueLesson(snapshot) ? snapshot : null
   }
 
   function applyResumeSnapshot(snapshot: LessonSnapshot): void {
     if (snapshot.subject?.trim()) {
       subject.value = snapshot.subject.trim()
     }
-    if (isModelKey(snapshot.model_name)) {
-      model.value = snapshot.model_name
-    }
   }
 
   function resetSessionPanels(): void {
     transcriptList.value = []
+    assetList.value = []
+    assetErrorMessage.value = ''
     partialTranscript.value = ''
     audioFrameCount.value = 0
     audioPeak.value = 0
     audioRms.value = 0
+  }
+
+  function showRefineStatusToast(payload: Omit<RefineStatusToast, 'id' | 'visible'>): void {
+    refineStatusToast.value = {
+      id: Date.now(),
+      visible: true,
+      ...payload,
+    }
+  }
+
+  function dismissRefineStatusToast(id?: number): void {
+    if (!refineStatusToast.value) {
+      return
+    }
+    if (id !== undefined && refineStatusToast.value.id !== id) {
+      return
+    }
+    refineStatusToast.value = {
+      ...refineStatusToast.value,
+      visible: false,
+    }
   }
 
   function updateSessionFromEvent(payload: RealtimeEvent): void {
@@ -350,23 +412,40 @@ export const useSessionStore = defineStore('session', () => {
 
   async function createRealtimeSession(): Promise<SessionInfo> {
     const signature = currentSessionConfigSignature()
+    const lessonSignature = currentLessonConfigSignature()
 
-    if (sessionInfo.value && lastSessionConfigSignature === signature) {
+    if (sessionInfo.value && lastSessionConfigSignature === signature && !promptBeforeNextStart) {
       return sessionInfo.value
     }
 
-    const resumeSnapshot = sessionInfo.value ? null : chooseResumeSnapshot()
-    if (resumeSnapshot) {
-      applyResumeSnapshot(resumeSnapshot)
+    let lessonSnapshot: LessonSnapshot | null = null
+    const currentLessonSnapshot = buildCurrentLessonSnapshot()
+
+    if (promptBeforeNextStart && currentLessonSnapshot) {
+      lessonSnapshot = confirmContinueLesson(currentLessonSnapshot) ? currentLessonSnapshot : null
+    } else if (
+      sessionInfo.value &&
+      currentLessonSnapshot &&
+      lastLessonConfigSignature === lessonSignature
+    ) {
+      // Model changes create a fresh ASR session but keep the lesson boundary.
+      lessonSnapshot = currentLessonSnapshot
+    } else {
+      lessonSnapshot = chooseResumeSnapshot()
+      if (lessonSnapshot) {
+        applyResumeSnapshot(lessonSnapshot)
+      }
     }
 
-    resetSessionPanels()
+    if (!lessonSnapshot) {
+      resetSessionPanels()
+    }
 
     const response = await createSessionRequest(
       {
         subject: subject.value.trim() || undefined,
-        course_id: resumeSnapshot?.course_id,
-        lesson_id: resumeSnapshot?.lesson_id,
+        course_id: lessonSnapshot?.course_id,
+        lesson_id: lessonSnapshot?.lesson_id,
         client_id: sessionClientId,
         sample_rate: defaultSampleRate,
         channels: defaultChannels,
@@ -377,7 +456,13 @@ export const useSessionStore = defineStore('session', () => {
 
     sessionInfo.value = response
     lastSessionConfigSignature = currentSessionConfigSignature()
+    lastLessonConfigSignature = currentLessonConfigSignature()
+    promptBeforeNextStart = false
     saveLessonSnapshot('active')
+    if (lessonSnapshot) {
+      await hydrateTranscriptsFromServer()
+    }
+    await refreshSessionAssets()
     return response
   }
 
@@ -387,6 +472,59 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     return createRealtimeSession()
+  }
+
+  function upsertAsset(asset: LessonAssetItem): void {
+    const next = [...assetList.value]
+    const index = next.findIndex((item) => item.asset_id === asset.asset_id)
+    if (index >= 0) {
+      next[index] = asset
+    } else {
+      next.unshift(asset)
+    }
+    assetList.value = next
+  }
+
+  async function refreshSessionAssets(): Promise<void> {
+    if (!sessionInfo.value) {
+      assetList.value = []
+      return
+    }
+    const response = await fetchSessionAssets(sessionInfo.value.session_id, backendBaseUrl.value)
+    assetList.value = response.items
+  }
+
+  async function pollAssetStatus(assetId: string): Promise<void> {
+    const startedAt = Date.now()
+    const timeoutMs = 10 * 60 * 1000
+    const finalStatuses = new Set(['done', 'failed', 'indexing_failed'])
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const response = await fetchLessonAsset(assetId, backendBaseUrl.value)
+      upsertAsset(response.item)
+      if (finalStatuses.has(response.item.status)) {
+        if (response.item.status === 'done') {
+          await hydrateTranscriptsFromServer()
+        }
+        return
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 3000))
+    }
+  }
+
+  async function uploadLessonAsset(file: File): Promise<void> {
+    assetUploading.value = true
+    assetErrorMessage.value = ''
+    try {
+      const activeSession = await ensureSession()
+      const response = await uploadSessionAsset(activeSession.session_id, file, backendBaseUrl.value)
+      upsertAsset(response.item)
+      void pollAssetStatus(response.item.asset_id)
+    } catch (error) {
+      assetErrorMessage.value = error instanceof Error ? error.message : '上传课堂素材失败。'
+    } finally {
+      assetUploading.value = false
+    }
   }
 
   function downsampleBuffer(
@@ -595,6 +733,7 @@ export const useSessionStore = defineStore('session', () => {
       recording.value = false
       await releaseAudioResources()
       await disconnectWebSocket()
+      promptBeforeNextStart = true
       saveLessonSnapshot('interrupted')
       errorMessage.value = error instanceof Error ? error.message : '启动录音失败。'
     } finally {
@@ -603,15 +742,42 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function stopRecording(): Promise<void> {
+    const stoppedSession = sessionInfo.value
+    if (stoppedSession) {
+      showRefineStatusToast({
+        kind: 'syncing',
+        title: '正在收尾录音',
+        message: '正在同步最后几段转写，随后会交给 DeepSeek 后台精修。',
+        detail: `${stoppedSession.course_id} / ${stoppedSession.lesson_id}`,
+      })
+    }
+
     recording.value = false
     await releaseAudioResources()
     await disconnectWebSocket()
 
     try {
       await hydrateTranscriptsFromServer()
+      if (stoppedSession) {
+        showRefineStatusToast({
+          kind: 'processing',
+          title: '转写精修已开始',
+          message: 'DeepSeek 正在后台整理本节转写，稍后可在历史回顾里查看 LLM 精修结果。',
+          detail: `${stoppedSession.course_id} / ${stoppedSession.lesson_id}`,
+        })
+      }
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : '同步转写记录失败。'
+      if (stoppedSession) {
+        showRefineStatusToast({
+          kind: 'error',
+          title: '转写同步失败',
+          message: '录音已停止，但前端同步转写失败；后台精修可能仍在继续。',
+          detail: error instanceof Error ? error.message : undefined,
+        })
+      }
     } finally {
+      promptBeforeNextStart = true
       saveLessonSnapshot('stopped')
     }
   }
@@ -624,24 +790,14 @@ export const useSessionStore = defineStore('session', () => {
     await startRecording()
   }
 
-  async function startNewLesson(): Promise<void> {
-    if (recording.value) {
-      await stopRecording()
-    } else {
-      await disconnectWebSocket()
-    }
-
-    sessionInfo.value = null
-    lastSessionConfigSignature = ''
-    skipResumePromptOnce = true
-    resetSessionPanels()
-  }
-
   async function cleanup(): Promise<void> {
     const wasRecording = recording.value
     recording.value = false
     await releaseAudioResources()
     await disconnectWebSocket()
+    if (sessionInfo.value) {
+      promptBeforeNextStart = true
+    }
     saveLessonSnapshot(wasRecording ? 'interrupted' : 'stopped')
   }
 
@@ -652,6 +808,10 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   return {
+    assetCount,
+    assetErrorMessage,
+    assetList,
+    assetUploading,
     audioFrameCount,
     audioPeak,
     audioRms,
@@ -660,8 +820,10 @@ export const useSessionStore = defineStore('session', () => {
     currentCourseId,
     currentLessonId,
     currentSessionId,
+    dismissRefineStatusToast,
     errorMessage,
     fetchMicrophones,
+    refreshSessionAssets,
     initializing,
     loadingMicrophones,
     microphone,
@@ -671,15 +833,16 @@ export const useSessionStore = defineStore('session', () => {
     partialTranscript,
     recordButtonBusy,
     recording,
+    refineStatusToast,
     sessionInfo,
     sessionStageLabel,
-    startNewLesson,
     startRecording,
     stopRecording,
     subject,
     toggleRecording,
     transcriptCount,
     transcriptList,
+    uploadLessonAsset,
     websocketState,
   }
 })

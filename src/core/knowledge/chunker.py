@@ -284,6 +284,9 @@ def _build_chunk_from_segments(
     course_id = _single_shared_value(record.course_id for record in unique_records)
     lesson_id = _single_shared_value(record.lesson_id for record in unique_records)
     source_file = _single_shared_value(record.source_file for record in unique_records)
+    shared_metadata = _shared_metadata(record.metadata for record in unique_records)
+    first_page_no = _first_non_none(_metadata_int(record.metadata, "page_no") for record in unique_records)
+    last_page_no = _last_non_none(_metadata_int(record.metadata, "page_no") for record in unique_records)
 
     return TranscriptChunk(
         doc_id=f"{first_record.session_id}:{first_record.chunk_id}-{last_record.chunk_id}:{chunk_index}",
@@ -304,6 +307,9 @@ def _build_chunk_from_segments(
         metadata={
             "record_ids": [record.record_id for record in unique_records],
             "segment_count": len(segments),
+            **shared_metadata,
+            **({"first_page_no": first_page_no} if first_page_no is not None else {}),
+            **({"last_page_no": last_page_no} if last_page_no is not None else {}),
         },
     )
 
@@ -316,6 +322,30 @@ def _single_shared_value(values: Iterable[str | None]) -> str | None:
     if all(value == first for value in materialized):
         return first
     return None
+
+
+def _shared_metadata(values: Iterable[dict[str, object]]) -> dict[str, object]:
+    materialized = list(values)
+    if not materialized:
+        return {}
+    keys = set(materialized[0].keys())
+    for item in materialized[1:]:
+        keys &= set(item.keys())
+    return {
+        key: materialized[0][key]
+        for key in keys
+        if all(item.get(key) == materialized[0][key] for item in materialized)
+    }
+
+
+def _metadata_int(metadata: dict[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _first_non_none(values: Iterable[int | None]) -> int | None:

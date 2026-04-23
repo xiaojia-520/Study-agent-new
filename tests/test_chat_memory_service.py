@@ -88,6 +88,43 @@ class ChatMemoryServiceTests(unittest.TestCase):
             self.assertEqual(summaries[0].lesson_id, "math-course-lesson-1")
             self.assertEqual(summaries[0].session_count, 2)
             self.assertEqual(summaries[0].message_count, 4)
+            self.assertEqual(summaries[0].transcript_count, 0)
+
+    def test_lesson_summaries_include_transcript_only_lessons(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteStore(Path(temp_dir) / "memory.sqlite3")
+            service = ChatMemoryService(store=store)
+            service.init_schema()
+            store.execute(
+                """
+                INSERT INTO transcript_records (
+                    session_id, storage_id, course_id, lesson_id, chunk_id, subject,
+                    source_type, text, clean_text, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "session-transcript-only",
+                    "store-a",
+                    "math-course",
+                    "math-course-lesson-2",
+                    1,
+                    "math",
+                    "realtime",
+                    "transcript text",
+                    "transcript text",
+                    123,
+                ),
+            )
+
+            summaries = service.list_lesson_summaries()
+
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0].course_id, "math-course")
+            self.assertEqual(summaries[0].lesson_id, "math-course-lesson-2")
+            self.assertEqual(summaries[0].message_count, 0)
+            self.assertEqual(summaries[0].transcript_count, 1)
+            self.assertEqual(summaries[0].session_count, 1)
 
     @staticmethod
     def _session(session_id: str = "session-a") -> RealtimeSession:

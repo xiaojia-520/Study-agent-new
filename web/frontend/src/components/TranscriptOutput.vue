@@ -18,7 +18,7 @@ function formatTimestamp(timestamp: number): string {
 }
 
 watch(
-  () => transcriptList.value.length,
+  () => [transcriptList.value.length, partialTranscript.value],
   async () => {
     await nextTick()
     const container = scrollContainerRef.value
@@ -51,19 +51,7 @@ watch(
       ref="scrollContainerRef"
       class="mt-4 flex-1 overflow-y-auto rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))] p-3"
     >
-      <article
-        v-if="partialTranscript"
-        class="mb-3 rounded-[var(--radius-soft)] border border-[rgba(var(--accent),0.12)] bg-[rgba(var(--accent),0.08)] p-3"
-      >
-        <p class="text-xs font-medium uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
-          partial
-        </p>
-        <p class="mt-2 text-sm leading-6 text-[rgb(var(--text-main))]">
-          {{ partialTranscript }}
-        </p>
-      </article>
-
-      <div v-if="transcriptList.length" class="space-y-3">
+      <div v-if="transcriptList.length || partialTranscript" class="space-y-3">
         <article
           v-for="item in transcriptList"
           :key="item.id"
@@ -74,6 +62,18 @@ watch(
           </p>
           <p class="mt-2 text-sm leading-6 text-[rgb(var(--text-main))]">
             {{ item.text }}
+          </p>
+        </article>
+
+        <article
+          v-if="partialTranscript"
+          class="rounded-[var(--radius-soft)] border border-[rgba(var(--accent),0.18)] bg-[rgba(var(--accent),0.08)] p-3 shadow-sm"
+        >
+          <p class="text-xs font-medium uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
+            partial
+          </p>
+          <p class="mt-2 break-words text-sm leading-6 text-[rgb(var(--text-main))]">
+            {{ partialTranscript }}
           </p>
         </article>
       </div>

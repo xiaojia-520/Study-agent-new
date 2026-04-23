@@ -67,6 +67,8 @@ logs/
 
 output.srt
 data/transcripts/
+data/assets/
+data/mineru_results/
 data/qdrant/
 data/*.sqlite3
 data/*.sqlite3-*
@@ -81,7 +83,11 @@ uploads/
 ############################
 .env
 .env.*
+*.env
+*.env.*
 config/.env
+config/.env.*
+web/frontend/.env*
 *.local
 web/frontend/certs/
 

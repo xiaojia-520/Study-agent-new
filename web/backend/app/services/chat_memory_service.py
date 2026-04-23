@@ -35,6 +35,7 @@ class ChatLessonSummary:
     first_at: int
     last_at: int
     message_count: int
+    transcript_count: int
     session_count: int
     last_session_id: str | None
 
@@ -169,24 +170,59 @@ class ChatMemoryService:
     def list_lesson_summaries(self, *, limit: int = 50) -> list[ChatLessonSummary]:
         rows = self.store.query_all(
             """
+            WITH lesson_events AS (
+                SELECT
+                    session_id,
+                    course_id,
+                    lesson_id,
+                    created_at,
+                    1 AS message_count,
+                    0 AS transcript_count
+                FROM chat_messages
+                WHERE course_id IS NOT NULL AND lesson_id IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    session_id,
+                    course_id,
+                    lesson_id,
+                    created_at,
+                    0 AS message_count,
+                    1 AS transcript_count
+                FROM transcript_records
+                WHERE course_id IS NOT NULL AND lesson_id IS NOT NULL
+            ),
+            lesson_groups AS (
+                SELECT
+                    course_id,
+                    lesson_id,
+                    MIN(created_at) AS first_at,
+                    MAX(created_at) AS last_at,
+                    SUM(message_count) AS message_count,
+                    SUM(transcript_count) AS transcript_count,
+                    COUNT(DISTINCT session_id) AS session_count
+                FROM lesson_events
+                GROUP BY course_id, lesson_id
+            )
             SELECT
                 course_id,
                 lesson_id,
-                MIN(created_at) AS first_at,
-                MAX(created_at) AS last_at,
-                COUNT(*) AS message_count,
-                COUNT(DISTINCT session_id) AS session_count,
+                first_at,
+                last_at,
+                message_count,
+                transcript_count,
+                session_count,
                 (
-                    SELECT cm2.session_id
-                    FROM chat_messages cm2
+                    SELECT event.session_id
+                    FROM lesson_events event
                     WHERE
-                        cm2.course_id = chat_messages.course_id
-                        AND cm2.lesson_id = chat_messages.lesson_id
-                    ORDER BY cm2.created_at DESC, cm2.id DESC
+                        event.course_id = lesson_groups.course_id
+                        AND event.lesson_id = lesson_groups.lesson_id
+                    ORDER BY event.created_at DESC
                     LIMIT 1
                 ) AS last_session_id
-            FROM chat_messages
-            GROUP BY course_id, lesson_id
+            FROM lesson_groups
             ORDER BY last_at DESC
             LIMIT ?
             """,
@@ -199,6 +235,7 @@ class ChatMemoryService:
                 first_at=int(row["first_at"]),
                 last_at=int(row["last_at"]),
                 message_count=int(row["message_count"]),
+                transcript_count=int(row["transcript_count"]),
                 session_count=int(row["session_count"]),
                 last_session_id=str(row["last_session_id"]) if row.get("last_session_id") is not None else None,
             )

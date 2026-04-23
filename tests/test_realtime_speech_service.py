@@ -85,12 +85,17 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
                 "web.backend.app.services.realtime_speech_service.session_manager.next_event_seq",
                 return_value=1,
             ),
+            patch(
+                "web.backend.app.services.realtime_speech_service.session_transcript_refine_service.enqueue_session",
+                return_value=True,
+            ) as refine_mock,
         ):
             payload = self._run_async(service.shutdown_session("session-stop", pipeline))
 
         self.assertTrue(pipeline.stopped)
         flush_mock.assert_called_once_with("session-stop")
         release_mock.assert_called_once_with("session-stop")
+        refine_mock.assert_called_once_with("session-stop")
         self.assertEqual(payload["type"], "session_stopped")
 
     @staticmethod

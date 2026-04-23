@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Optional
 
 
-SourceType = Literal["realtime", "video"]
-_VALID_SOURCE_TYPES = {"realtime", "video"}
+SourceType = Literal["realtime", "video", "document", "slide", "image"]
+_VALID_SOURCE_TYPES = {"realtime", "video", "document", "slide", "image"}
 
 
 def _require_str(value: Any, field_name: str) -> str:
@@ -38,6 +38,12 @@ def _optional_int(value: Any, field_name: str) -> Optional[int]:
         raise ValueError(f"{field_name} must be an integer when provided") from exc
 
 
+def _optional_metadata(value: Any) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
 def _normalize_source_type(value: Any) -> SourceType:
     source_type = _require_str(value, "source_type").lower()
     if source_type not in _VALID_SOURCE_TYPES:
@@ -61,6 +67,7 @@ class TranscriptRecord:
     source_file: Optional[str] = None
     start_ms: Optional[int] = None
     end_ms: Optional[int] = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "TranscriptRecord":
@@ -87,6 +94,7 @@ class TranscriptRecord:
             source_file=_optional_str(payload.get("source_file")),
             start_ms=_optional_int(payload.get("start_ms"), "start_ms"),
             end_ms=_optional_int(payload.get("end_ms"), "end_ms"),
+            metadata=_optional_metadata(payload.get("metadata")),
         )
 
     @property

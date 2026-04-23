@@ -186,7 +186,7 @@ onMounted(() => {
               </span>
             </div>
 
-            <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-[rgb(var(--text-subtle))]">
+            <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-[rgb(var(--text-subtle))]">
               <div class="rounded-[14px] bg-[rgba(var(--bg-muted),0.7)] px-2.5 py-2">
                 <span class="block text-[rgb(var(--text-faint))]">最近</span>
                 <strong class="mt-1 block font-semibold text-[rgb(var(--text-main))]">
@@ -197,6 +197,12 @@ onMounted(() => {
                 <span class="block text-[rgb(var(--text-faint))]">录音段</span>
                 <strong class="mt-1 block font-semibold text-[rgb(var(--text-main))]">
                   {{ item.session_count }} 次
+                </strong>
+              </div>
+              <div class="rounded-[14px] bg-[rgba(var(--bg-muted),0.7)] px-2.5 py-2">
+                <span class="block text-[rgb(var(--text-faint))]">转写</span>
+                <strong class="mt-1 block font-semibold text-[rgb(var(--text-main))]">
+                  {{ item.transcript_count || 0 }} 条
                 </strong>
               </div>
             </div>

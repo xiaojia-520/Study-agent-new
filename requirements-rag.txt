@@ -9,6 +9,8 @@ fastapi
 uvicorn[standard]
 pydantic-settings
 python-dotenv
+python-multipart
+requests
 
 # Embedding runtime
 sentence-transformers

@@ -1,7 +1,10 @@
 import os
 from flask import Flask, request
 
-UPLOAD_DIR = r"E:\mnt"
+UPLOAD_DIR = os.environ.get(
+    "TEST_UPLOAD_DIR",
+    os.path.join(os.path.dirname(__file__), "uploads"),
+)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)

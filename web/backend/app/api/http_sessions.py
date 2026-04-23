@@ -3,15 +3,17 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from src.core.asr.realtime_models import resolve_realtime_asr_model
 from web.backend.app.services.chat_memory_service import chat_memory_service
+from web.backend.app.services.lesson_asset_service import lesson_asset_service, validate_asset_file_name
 from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
 from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
 from web.backend.app.services.session_rag_query_service import QueryScope, session_rag_query_service
 from web.backend.app.services.session_manager import session_manager
+from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.transcript_service import transcript_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -141,6 +143,23 @@ async def get_lesson_transcripts(
     }
 
 
+@router.get("/history/refined-transcripts")
+async def get_lesson_refined_transcripts(
+    course_id: str = Query(..., min_length=1),
+    lesson_id: str = Query(..., min_length=1),
+):
+    items = session_transcript_refine_service.list_lesson_refined_transcripts(
+        course_id=course_id,
+        lesson_id=lesson_id,
+    )
+    return {
+        "course_id": course_id,
+        "lesson_id": lesson_id,
+        "count": len(items),
+        "items": [asdict(item) for item in items],
+    }
+
+
 @router.get("/{session_id}/transcripts")
 async def get_session_transcripts(session_id: str):
     session = session_manager.get_session(session_id)
@@ -160,6 +179,71 @@ async def get_session_messages(session_id: str):
         "count": len(items),
         "items": [asdict(item) for item in items],
     }
+
+
+@router.post("/{session_id}/assets")
+async def upload_session_asset(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+    file_name = file.filename or "document"
+    try:
+        validate_asset_file_name(file_name)
+        asset_id, safe_name, target_path = lesson_asset_service.allocate_upload_path(
+            session_id=session_id,
+            file_name=file_name,
+        )
+        file_size = 0
+        with target_path.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                handle.write(chunk)
+        asset = lesson_asset_service.create_asset(
+            asset_id=asset_id,
+            session=session,
+            file_name=safe_name,
+            file_path=target_path,
+            file_size=file_size,
+            media_type=file.content_type or "application/octet-stream",
+            metadata={"original_file_name": file_name},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+    background_tasks.add_task(lesson_asset_service.parse_and_index_asset, asset.asset_id)
+    return {"item": lesson_asset_service.to_dict(asset)}
+
+
+@router.get("/{session_id}/assets")
+async def list_session_assets(session_id: str):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+    items = lesson_asset_service.list_session_assets(session_id)
+    return {
+        "session_id": session_id,
+        "count": len(items),
+        "items": [lesson_asset_service.to_dict(item) for item in items],
+    }
+
+
+@router.get("/assets/{asset_id}")
+async def get_lesson_asset(asset_id: str):
+    asset = lesson_asset_service.get_asset(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail=f"asset not found: {asset_id}")
+    return {"item": lesson_asset_service.to_dict(asset)}
 
 
 @router.post("/{session_id}/query")

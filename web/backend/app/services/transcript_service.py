@@ -6,9 +6,11 @@ from pathlib import Path
 import threading
 import time
 import re
+from typing import Any, Mapping
 
 from config.settings import settings
 from src.core.knowledge.transcript_jsonl_store import TranscriptJsonlStore
+from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.domain.session import RealtimeSession
 
 logger = logging.getLogger(__name__)
@@ -17,9 +19,13 @@ logger = logging.getLogger(__name__)
 class TranscriptService:
     """Manage realtime transcript persistence for websocket sessions."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, store: SQLiteStore = sqlite_store) -> None:
+        self.store = store
         self._stores: dict[str, TranscriptJsonlStore] = {}
         self._lock = threading.RLock()
+
+    def init_schema(self) -> None:
+        self.store.init_schema()
 
     def _get_or_create_store(self, session: RealtimeSession) -> TranscriptJsonlStore:
         with self._lock:
@@ -61,6 +67,7 @@ class TranscriptService:
             text=clean_text,
             source_type="realtime",
         )
+        self.append_transcript_record(record)
         logger.debug(
             "Persisted realtime transcript for session %s chunk %s",
             session.session_id,
@@ -68,7 +75,56 @@ class TranscriptService:
         )
         return record
 
+    def append_transcript_record(self, record: Mapping[str, Any]) -> int:
+        text = str(record.get("text") or "").strip()
+        clean_text = str(record.get("clean_text") or text).strip()
+        if not clean_text:
+            raise ValueError("transcript text is required")
+
+        return self.store.execute(
+            """
+            INSERT OR IGNORE INTO transcript_records (
+                session_id, storage_id, course_id, lesson_id, chunk_id, subject,
+                source_type, source_file, start_ms, end_ms, text, clean_text, created_at, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _optional_text(record.get("session_id")) or "",
+                _optional_text(record.get("storage_id")),
+                _optional_text(record.get("course_id")),
+                _optional_text(record.get("lesson_id")),
+                int(record.get("chunk_id") or 0),
+                _optional_text(record.get("subject")),
+                _optional_text(record.get("source_type")) or "realtime",
+                _optional_text(record.get("source_file")),
+                _optional_int(record.get("start_ms")),
+                _optional_int(record.get("end_ms")),
+                text or clean_text,
+                clean_text,
+                int(record.get("created_at") or time.time()),
+                _encode_metadata(record.get("metadata")),
+            ),
+        )
+
+    def next_chunk_id(self, session_id: str) -> int:
+        rows = self.store.query_all(
+            """
+            SELECT MAX(chunk_id) AS max_chunk_id
+            FROM transcript_records
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        )
+        if not rows or rows[0].get("max_chunk_id") is None:
+            return 1
+        return int(rows[0]["max_chunk_id"]) + 1
+
     def list_session_transcripts(self, session: RealtimeSession | None, session_id: str):
+        sqlite_records = self._list_session_transcripts_from_sqlite(session_id)
+        if sqlite_records:
+            return sqlite_records
+
         file_path = self._resolve_file_path(session, session_id)
         if file_path is None or not file_path.exists():
             return []
@@ -83,6 +139,10 @@ class TranscriptService:
         return records
 
     def list_lesson_transcripts(self, *, course_id: str, lesson_id: str):
+        sqlite_records = self._list_lesson_transcripts_from_sqlite(course_id=course_id, lesson_id=lesson_id)
+        if sqlite_records:
+            return sqlite_records
+
         records = []
         for file_path in sorted(settings.TRANSCRIPT_SAVE_DIR.glob("*.jsonl")):
             try:
@@ -106,6 +166,32 @@ class TranscriptService:
         )
         return records
 
+    def _list_session_transcripts_from_sqlite(self, session_id: str) -> list[dict[str, Any]]:
+        rows = self.store.query_all(
+            """
+            SELECT id, session_id, storage_id, course_id, lesson_id, chunk_id, subject,
+                   source_type, source_file, start_ms, end_ms, text, clean_text, created_at, metadata_json
+            FROM transcript_records
+            WHERE session_id = ?
+            ORDER BY created_at ASC, chunk_id ASC, id ASC
+            """,
+            (session_id,),
+        )
+        return [_row_to_transcript_record(row) for row in rows]
+
+    def _list_lesson_transcripts_from_sqlite(self, *, course_id: str, lesson_id: str) -> list[dict[str, Any]]:
+        rows = self.store.query_all(
+            """
+            SELECT id, session_id, storage_id, course_id, lesson_id, chunk_id, subject,
+                   source_type, source_file, start_ms, end_ms, text, clean_text, created_at, metadata_json
+            FROM transcript_records
+            WHERE course_id = ? AND lesson_id = ?
+            ORDER BY created_at ASC, session_id ASC, chunk_id ASC, id ASC
+            """,
+            (course_id, lesson_id),
+        )
+        return [_row_to_transcript_record(row) for row in rows]
+
     def _resolve_file_path(self, session: RealtimeSession | None, session_id: str) -> Path | None:
         if session is not None:
             candidate = settings.TRANSCRIPT_SAVE_DIR / f"{self._build_storage_id(session)}.jsonl"
@@ -127,3 +213,55 @@ class TranscriptService:
 
 
 transcript_service = TranscriptService()
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _encode_metadata(value: Any) -> str | None:
+    if not value:
+        return None
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _decode_metadata(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        payload = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _row_to_transcript_record(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "session_id": str(row["session_id"]),
+        "storage_id": _optional_text(row.get("storage_id")),
+        "course_id": _optional_text(row.get("course_id")),
+        "lesson_id": _optional_text(row.get("lesson_id")),
+        "chunk_id": int(row["chunk_id"]),
+        "subject": _optional_text(row.get("subject")) or "untitled",
+        "source_type": _optional_text(row.get("source_type")) or "realtime",
+        "source_file": _optional_text(row.get("source_file")),
+        "start_ms": _optional_int(row.get("start_ms")),
+        "end_ms": _optional_int(row.get("end_ms")),
+        "text": str(row["text"]),
+        "clean_text": str(row["clean_text"]),
+        "created_at": int(row["created_at"]),
+        "metadata": _decode_metadata(row.get("metadata_json")),
+    }
