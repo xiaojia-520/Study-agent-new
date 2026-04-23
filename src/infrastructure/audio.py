@@ -1,6 +1,12 @@
-import numpy as np
+from __future__ import annotations
+
 import os
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+import ffmpeg
+import numpy as np
+
 
 def indata_to_mono_float32(indata: np.ndarray) -> np.ndarray:
     audio = np.asarray(indata, dtype=np.float32)
@@ -15,118 +21,127 @@ def indata_to_mono_float32(indata: np.ndarray) -> np.ndarray:
 
     return audio.reshape(-1)
 
-def ms_to_srt_time(ms: int) -> str:
-    """毫秒 -> SRT 时间格式 HH:MM:SS,mmm"""
-    if ms < 0:
-        ms = 0
-    h = ms // 3600000
-    ms %= 3600000
-    m = ms // 60000
-    ms %= 60000
-    s = ms // 1000
-    ms %= 1000
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+def ms_to_srt_time(ms: int | float | None) -> str:
+    """Convert milliseconds to SRT timestamp format: HH:MM:SS,mmm."""
+    resolved_ms = max(0, int(ms or 0))
+    hours = resolved_ms // 3_600_000
+    resolved_ms %= 3_600_000
+    minutes = resolved_ms // 60_000
+    resolved_ms %= 60_000
+    seconds = resolved_ms // 1000
+    resolved_ms %= 1000
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{resolved_ms:03d}"
 
 
-def res_to_srt(res: List[Dict[str, Any]], srt_path: str) -> str:
-    """
-    FunASR res -> .srt
-    期望 res 类似: [{'text':..., 'start':ms, 'end':ms, ...}, ...]
-    """
-    lines = []
-    idx = 1
-    for seg in res:
-        text = (seg.get("text") or "").strip()
-        if not text:
+def normalize_subtitle_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
+    text = str(segment.get("text") or "").strip()
+    start_ms = int(segment.get("start_ms", segment.get("start", 0)) or 0)
+    end_ms = int(segment.get("end_ms", segment.get("end", start_ms + 500)) or start_ms + 500)
+    if end_ms <= start_ms:
+        end_ms = start_ms + 500
+    return {
+        "start_ms": max(0, start_ms),
+        "end_ms": max(0, end_ms),
+        "text": text,
+    }
+
+
+def subtitle_segments_to_srt(segments: Sequence[Mapping[str, Any]]) -> str:
+    lines: list[str] = []
+    index = 1
+    for raw_segment in segments:
+        segment = normalize_subtitle_segment(raw_segment)
+        if not segment["text"]:
             continue
-        start_ms = int(seg.get("start", 0))
-        end_ms = int(seg.get("end", start_ms + 500))
 
-        start_ts = ms_to_srt_time(start_ms)
-        end_ts = ms_to_srt_time(end_ms)
-
-        lines.append(str(idx))
-        lines.append(f"{start_ts} --> {end_ts}")
-        lines.append(text)
-        lines.append("")  # 空行分隔
-        idx += 1
-
-    os.makedirs(os.path.dirname(srt_path) or ".", exist_ok=True)
-    with open(srt_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
-    return srt_path
-
-import os
-import ffmpeg
+        lines.append(str(index))
+        lines.append(f"{ms_to_srt_time(segment['start_ms'])} --> {ms_to_srt_time(segment['end_ms'])}")
+        lines.append(segment["text"])
+        lines.append("")
+        index += 1
+    return "\n".join(lines).rstrip() + ("\n" if lines else "")
 
 
-def mux_srt_soft(video_path: str, srt_path: str, out_path: str = None) -> str:
+def write_srt_segments(segments: Sequence[Mapping[str, Any]], srt_path: str | Path) -> str:
+    target = Path(srt_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(subtitle_segments_to_srt(segments), encoding="utf-8")
+    return str(target)
+
+
+def res_to_srt(res: Sequence[Mapping[str, Any]], srt_path: str | Path) -> str:
+    """Backward-compatible wrapper for writing pre-segmented subtitle records."""
+    return write_srt_segments(res, srt_path)
+
+
+def mux_srt_soft(video_path: str | Path, srt_path: str | Path, out_path: str | Path | None = None) -> str:
     """
-    把 srt 作为“软字幕轨”封装进视频：
-    - 不重编码视频/音频（快）
-    - 播放器可开关字幕
+    Add SRT as a soft subtitle track.
+
+    The video/audio streams are copied without re-encoding, so this is fast and
+    the subtitle track can be toggled in compatible players.
     """
+    source_video = str(video_path)
+    source_srt = str(srt_path)
     if out_path is None:
-        base, ext = os.path.splitext(video_path)
+        base, ext = os.path.splitext(source_video)
         out_path = f"{base}_subbed{ext}"
+    target = str(out_path)
 
-    v_in = ffmpeg.input(video_path)
-    s_in = ffmpeg.input(srt_path)
+    video_input = ffmpeg.input(source_video)
+    subtitle_input = ffmpeg.input(source_srt)
 
-    # mp4 用 mov_text 更兼容；mkv 可用 srt（但 mov_text 在 mkv 也能工作）
-    ext = os.path.splitext(out_path)[1].lower()
-    sub_codec = "mov_text" if ext in [".mp4", ".m4v"] else "srt"
+    ext = os.path.splitext(target)[1].lower()
+    subtitle_codec = "mov_text" if ext in {".mp4", ".m4v"} else "srt"
 
     (
-        ffmpeg
-        .output(
-            v_in.video,
-            v_in.audio,
-            s_in,
-            out_path,
+        ffmpeg.output(
+            video_input.video,
+            video_input.audio,
+            subtitle_input,
+            target,
             c="copy",
-            c_s=sub_codec,
-            metadata_s_s_0="language=chi",  # 可改 eng 等
+            c_s=subtitle_codec,
+            metadata_s_s_0="language=chi",
         )
         .overwrite_output()
         .run(quiet=True)
     )
-    return out_path
-
-import os
-import ffmpeg
+    return target
 
 
-def _escape_for_subtitles_filter(path: str) -> str:
-    # ffmpeg subtitles filter 在 Windows 上对 : \ 之类敏感，需要转义
-    # 经验规则：反斜杠换成 /，冒号转义
-    p = os.path.abspath(path).replace("\\", "/")
-    p = p.replace(":", "\\:")
-    return p
+def _escape_for_subtitles_filter(path: str | Path) -> str:
+    normalized = os.path.abspath(str(path)).replace("\\", "/")
+    return normalized.replace(":", "\\:")
 
 
-def burn_srt_hard(video_path: str, srt_path: str, out_path: str = None, crf: int = 20) -> str:
+def burn_srt_hard(
+    video_path: str | Path,
+    srt_path: str | Path,
+    out_path: str | Path | None = None,
+    crf: int = 20,
+) -> str:
     """
-    把字幕烧录到画面（硬字幕）
-    - 会重编码视频
-    - out_path 默认 *_burn.mp4
+    Burn SRT subtitles into the video frames.
+
+    This re-encodes video and is slower than mux_srt_soft, but the subtitles are
+    visible in every player.
     """
+    source_video = str(video_path)
     if out_path is None:
-        base, _ = os.path.splitext(video_path)
+        base, _ = os.path.splitext(source_video)
         out_path = f"{base}_burn.mp4"
+    target = str(out_path)
 
-    srt_escaped = _escape_for_subtitles_filter(srt_path)
-
-    inp = ffmpeg.input(video_path)
-    vid = inp.video.filter("subtitles", srt_escaped)
+    video_input = ffmpeg.input(source_video)
+    video_stream = video_input.video.filter("subtitles", _escape_for_subtitles_filter(srt_path))
 
     (
-        ffmpeg
-        .output(
-            vid,
-            inp.audio,
-            out_path,
+        ffmpeg.output(
+            video_stream,
+            video_input.audio,
+            target,
             vcodec="libx264",
             crf=crf,
             acodec="aac",
@@ -135,5 +150,4 @@ def burn_srt_hard(video_path: str, srt_path: str, out_path: str = None, crf: int
         .overwrite_output()
         .run(quiet=True)
     )
-    return out_path
-
+    return target

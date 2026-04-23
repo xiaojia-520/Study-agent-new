@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -54,10 +55,22 @@ class VEDIOTranscriber:
     def __init__(self):
         self.funasr_model = model_hub.load_funasr_model()
 
-    def transcribe(self, audio: str | Path) -> str:
-        res = self.funasr_model.generate(
+    def transcribe_raw(self, audio: str | Path) -> list[dict[str, Any]]:
+        result = self.funasr_model.generate(
             input=audio,
             batch_size_s=300,
             vad_kwargs={"max_single_segment_time": 60000},
         )
-        return res[0]["sentence_info"]
+        return [dict(item) for item in result or [] if isinstance(item, dict)]
+
+    def transcribe(self, audio: str | Path) -> list[dict[str, Any]]:
+        result = self.transcribe_raw(audio)
+        if not result:
+            return []
+
+        first = result[0]
+        for key in ("sentence_info", "stamp_sents"):
+            value = first.get(key)
+            if isinstance(value, list):
+                return [dict(item) for item in value if isinstance(item, dict)]
+        return result

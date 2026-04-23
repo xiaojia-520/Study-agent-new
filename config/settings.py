@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
     TRANSCRIPT_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "transcripts")
     ASSET_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "assets")
+    VIDEO_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "videos")
+    VIDEO_SUBTITLE_DIR: Path = _ensure_dir(DATA_DIR / "video_subtitles")
     MINERU_RESULT_DIR: Path = _ensure_dir(DATA_DIR / "mineru_results")
     QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
     SQLITE_DB_PATH: Path = DATA_DIR / "study_agent.sqlite3"
@@ -88,6 +90,7 @@ class Settings(BaseSettings):
     MINERU_DOWNLOAD_TIMEOUT_SECONDS: float = 300.0
     MINERU_AUTO_INDEX_ENABLED: bool = True
     MINERU_MAX_UPLOAD_BYTES: int = 200 * 1024 * 1024
+    VIDEO_MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024 * 1024
 
     class Config:
         case_sensitive = True

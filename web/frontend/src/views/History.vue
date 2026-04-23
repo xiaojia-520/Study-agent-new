@@ -10,6 +10,7 @@ import {
   fetchRefinedLessonTranscripts,
   querySession,
 } from '../api/studyAgent'
+import LessonVideoReview from '../components/history/LessonVideoReview.vue'
 import SideBar from '../components/history/SideBar.vue'
 import { useSessionStore } from '../stores/session'
 import type {
@@ -337,6 +338,12 @@ function formatTimelineTime(timestamp?: number): string {
                 </strong>
               </article>
             </div>
+
+            <LessonVideoReview
+              class="mt-4 shrink-0"
+              :course-id="selectedLesson.course_id"
+              :lesson-id="selectedLesson.lesson_id"
+            />
 
             <div class="mt-5 grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
               <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">

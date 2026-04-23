@@ -8,6 +8,8 @@ import type {
   QuerySessionPayload,
   RefinedTranscriptResponse,
   SessionInfo,
+  SessionVideoListResponse,
+  SessionVideoResponse,
   TranscriptResponse,
 } from '../types/study'
 
@@ -19,7 +21,7 @@ function normalizeBaseUrl(baseUrl = defaultBackendBaseUrl): string {
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`
 }
 
-function buildApiUrl(path: string, baseUrl = defaultBackendBaseUrl): string {
+export function buildApiUrl(path: string, baseUrl = defaultBackendBaseUrl): string {
   return new URL(path.replace(/^\//, ''), normalizeBaseUrl(baseUrl)).toString()
 }
 
@@ -139,6 +141,61 @@ export function fetchLessonAsset(assetId: string, baseUrl = defaultBackendBaseUr
       method: 'GET',
     },
     '获取素材状态失败',
+    baseUrl,
+  )
+}
+
+export function uploadSessionVideo(sessionId: string, file: File, baseUrl = defaultBackendBaseUrl) {
+  const body = new FormData()
+  body.append('file', file)
+  return requestJson<SessionVideoResponse>(
+    `/sessions/${sessionId}/videos`,
+    {
+      method: 'POST',
+      body,
+    },
+    '上传课堂视频失败',
+    baseUrl,
+  )
+}
+
+export function fetchSessionVideos(sessionId: string, baseUrl = defaultBackendBaseUrl) {
+  return requestJson<SessionVideoListResponse>(
+    `/sessions/${sessionId}/videos`,
+    {
+      method: 'GET',
+    },
+    '获取课堂视频失败',
+    baseUrl,
+  )
+}
+
+export function fetchSessionVideo(videoId: string, baseUrl = defaultBackendBaseUrl) {
+  return requestJson<SessionVideoResponse>(
+    `/sessions/videos/${videoId}`,
+    {
+      method: 'GET',
+    },
+    '获取视频字幕状态失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonVideos(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const params = new URLSearchParams({
+    course_id: courseId,
+    lesson_id: lessonId,
+  })
+  return requestJson<SessionVideoListResponse>(
+    `/sessions/history/videos?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    '获取历史课堂视频失败',
     baseUrl,
   )
 }

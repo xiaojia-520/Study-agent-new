@@ -31,7 +31,7 @@ class ModelHub:
             model = self._asr_models.get(resolved_model_name)
             if model is None:
                 logger.info(f"Loading ASR model: {resolved_model_name}")
-                model = AutoModel(model=resolved_model_name, trust_remote_code=True)
+                model = AutoModel(model=resolved_model_name, trust_remote_code=True, disable_update=True)
                 self._asr_models[resolved_model_name] = model
                 logger.info("ASR model loaded")
         return model
@@ -65,6 +65,7 @@ class ModelHub:
                 vad_model=settings.VAD_MODEL_NAME,
                 punc_model=settings.PUNC_MODEL_NAME,
                 sentence_timestamp=True,
+                disable_update=True,
             )
             logger.info("FunASR offline model loaded")
         return self.funasr_model

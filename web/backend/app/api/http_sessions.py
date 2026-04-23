@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from config.settings import settings
 from src.core.asr.realtime_models import resolve_realtime_asr_model
 from web.backend.app.services.chat_memory_service import chat_memory_service
 from web.backend.app.services.lesson_asset_service import lesson_asset_service, validate_asset_file_name
@@ -14,6 +17,7 @@ from web.backend.app.services.session_lesson_summary_service import session_less
 from web.backend.app.services.session_rag_query_service import QueryScope, session_rag_query_service
 from web.backend.app.services.session_manager import session_manager
 from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
+from web.backend.app.services.session_video_service import session_video_service, validate_video_file_name
 from web.backend.app.services.transcript_service import transcript_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -160,6 +164,20 @@ async def get_lesson_refined_transcripts(
     }
 
 
+@router.get("/history/videos")
+async def get_lesson_videos(
+    course_id: str = Query(..., min_length=1),
+    lesson_id: str = Query(..., min_length=1),
+):
+    items = session_video_service.list_lesson_videos(course_id=course_id, lesson_id=lesson_id)
+    return {
+        "course_id": course_id,
+        "lesson_id": lesson_id,
+        "count": len(items),
+        "items": [_video_response_item(item) for item in items],
+    }
+
+
 @router.get("/{session_id}/transcripts")
 async def get_session_transcripts(session_id: str):
     session = session_manager.get_session(session_id)
@@ -246,6 +264,102 @@ async def get_lesson_asset(asset_id: str):
     return {"item": lesson_asset_service.to_dict(asset)}
 
 
+@router.post("/{session_id}/videos")
+async def upload_session_video(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+    target_path: Path | None = None
+    file_name = file.filename or "recording.webm"
+    try:
+        validate_video_file_name(file_name)
+        video_id, safe_name, target_path = session_video_service.allocate_upload_path(
+            session_id=session_id,
+            file_name=file_name,
+        )
+        file_size = 0
+        with target_path.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > settings.VIDEO_MAX_UPLOAD_BYTES:
+                    raise ValueError("uploaded video exceeds size limit")
+                handle.write(chunk)
+        video = session_video_service.create_video(
+            video_id=video_id,
+            session=session,
+            file_name=safe_name,
+            file_path=target_path,
+            file_size=file_size,
+            media_type=file.content_type or "application/octet-stream",
+            metadata={"original_file_name": file_name},
+        )
+    except ValueError as exc:
+        if target_path is not None:
+            target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+    background_tasks.add_task(session_video_service.process_video, video.video_id)
+    return {"item": _video_response_item(video)}
+
+
+@router.get("/{session_id}/videos")
+async def list_session_videos(session_id: str):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+    items = session_video_service.list_session_videos(session_id)
+    return {
+        "session_id": session_id,
+        "count": len(items),
+        "items": [_video_response_item(item) for item in items],
+    }
+
+
+@router.get("/videos/{video_id}")
+async def get_session_video(video_id: str):
+    video = session_video_service.get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail=f"video not found: {video_id}")
+    return {"item": _video_response_item(video)}
+
+
+@router.get("/videos/{video_id}/file")
+async def download_session_video_file(video_id: str):
+    video = session_video_service.get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail=f"video not found: {video_id}")
+
+    file_path = Path(video.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="video file not found")
+    return FileResponse(file_path, media_type=video.media_type, filename=video.file_name)
+
+
+@router.get("/videos/{video_id}/srt")
+async def download_session_video_srt(video_id: str):
+    video = session_video_service.get_video(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail=f"video not found: {video_id}")
+    if video.status != "done" or not video.srt_path:
+        raise HTTPException(status_code=404, detail="subtitle is not ready")
+
+    srt_path = Path(video.srt_path)
+    if not srt_path.exists():
+        raise HTTPException(status_code=404, detail="subtitle file not found")
+    return FileResponse(srt_path, media_type="application/x-subrip", filename=f"{video.video_id}.srt")
+
+
 @router.post("/{session_id}/query")
 async def query_session(session_id: str, payload: SessionQueryRequest):
     try:
@@ -328,3 +442,10 @@ async def generate_session_quiz(session_id: str, payload: SessionQuizRequest):
         "questions": [asdict(item) for item in quiz.questions],
         "metadata": dict(quiz.metadata),
     }
+
+
+def _video_response_item(video):
+    item = session_video_service.to_dict(video)
+    item["video_url"] = f"/sessions/videos/{video.video_id}/file"
+    item["srt_url"] = f"/sessions/videos/{video.video_id}/srt" if video.srt_path else None
+    return item

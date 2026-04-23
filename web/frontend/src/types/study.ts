@@ -153,6 +153,49 @@ export interface LessonAssetListResponse {
   items: LessonAssetItem[]
 }
 
+export interface VideoSubtitleSegment {
+  start_ms: number
+  end_ms: number
+  text: string
+}
+
+export interface SessionVideoItem {
+  id: number
+  video_id: string
+  session_id: string
+  course_id?: string | null
+  lesson_id?: string | null
+  subject?: string | null
+  file_name: string
+  file_path: string
+  file_size: number
+  media_type: string
+  status: 'uploaded' | 'processing' | 'done' | 'failed' | string
+  wav_path?: string | null
+  srt_path?: string | null
+  text?: string | null
+  segment_count: number
+  error_message?: string | null
+  created_at: number
+  updated_at: number
+  metadata: Record<string, unknown>
+  segments: VideoSubtitleSegment[]
+  video_url?: string | null
+  srt_url?: string | null
+}
+
+export interface SessionVideoResponse {
+  item: SessionVideoItem
+}
+
+export interface SessionVideoListResponse {
+  session_id?: string
+  course_id?: string
+  lesson_id?: string
+  count: number
+  items: SessionVideoItem[]
+}
+
 export interface RealtimeEvent {
   type?: string
   seq?: number
