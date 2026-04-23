@@ -65,6 +65,25 @@ const statusLabel = computed(() => {
   return '等待录制'
 })
 
+const connectionLabel = computed(() => {
+  if (recordingVideo.value) {
+    return '视频录制中'
+  }
+  if (recording.value) {
+    return '课堂录音中'
+  }
+  if (websocketState.value === 'open') {
+    return '课堂已连接'
+  }
+  if (websocketState.value === 'connecting') {
+    return '课堂连接中'
+  }
+  if (cameraEnabled.value) {
+    return '摄像头预览'
+  }
+  return '未连接'
+})
+
 function updateFrameSize(): void {
   const host = previewHostRef.value
   if (!host) return
@@ -522,7 +541,7 @@ onBeforeUnmount(() => {
     <div class="mt-4 flex min-h-0 flex-1 flex-col gap-3">
       <div
         ref="previewHostRef"
-        class="flex min-h-[220px] flex-1 items-center justify-center overflow-hidden"
+        class="flex flex-1 items-center justify-center overflow-hidden"
       >
         <div
           class="relative flex-none overflow-hidden rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.1)] bg-[#111827]"
