@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config.settings import settings
-from src.application.rag_runtime import get_shared_rag_runtime
-from src.application.lesson_asset_record_builder import LessonAssetRecordBuilder
+from src.application.documents.lesson_asset_record_builder import LessonAssetRecordBuilder
+from src.application.rag.runtime import get_shared_rag_runtime
 from src.core.knowledge.document_models import TranscriptRecord
 from src.core.documents.asset_files import (
     find_markdown_file,

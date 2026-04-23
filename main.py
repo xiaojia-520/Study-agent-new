@@ -34,7 +34,7 @@
 #
 # print("✅ 已生成 output.srt")
 
-# from src.application.speech_pipeline import SpeechPipeline
+# from src.application.speech.pipeline import SpeechPipeline
 #
 # import time
 # def main():

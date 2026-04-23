@@ -8,7 +8,7 @@ from config.prompts import (
     build_lesson_quiz_chunk_prompt,
     build_lesson_quiz_merge_prompt,
 )
-from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
+from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from web.backend.app.domain.lesson_quiz import LessonQuiz, QuizQuestion
 from web.backend.app.domain.session import RealtimeSession
 from web.backend.app.services.session_manager import session_manager

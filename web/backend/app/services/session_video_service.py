@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from config.settings import settings
-from src.application.video_subtitle_service import VideoSubtitleService
+from src.application.video.subtitle_service import VideoSubtitleService
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.domain.session import RealtimeSession
 from web.backend.app.domain.video import LessonVideo

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from config.prompts import build_transcript_refine_prompt
-from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
+from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.services.session_manager import session_manager
 from web.backend.app.services.transcript_service import transcript_service

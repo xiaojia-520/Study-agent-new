@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.application.video_subtitle_service import VideoSubtitleResult, VideoSubtitleService
+from src.application.video.subtitle_service import VideoSubtitleResult, VideoSubtitleService
 
 
 class VideoTranscriber(VideoSubtitleService):

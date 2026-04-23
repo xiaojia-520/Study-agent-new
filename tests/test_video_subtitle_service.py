@@ -1,4 +1,4 @@
-from src.application.video_subtitle_service import funasr_result_to_segments
+from src.application.video.subtitle_service import funasr_result_to_segments
 from src.infrastructure.audio import subtitle_segments_to_srt
 
 

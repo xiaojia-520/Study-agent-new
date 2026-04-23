@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from fastapi import WebSocket
 
-from src.application.speech_pipeline import WebSpeechPipeline
+from src.application.speech.pipeline import WebSpeechPipeline
 from web.backend.app.domain.session import RealtimeSession
 from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
 from web.backend.app.services.session_manager import session_manager

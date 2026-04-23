@@ -6,8 +6,8 @@ import threading
 from typing import Any
 
 from config.settings import settings
-from src.application.rag_indexing_service import RagIndexingService
-from src.application.rag_query_service import RagQueryService
+from src.application.rag.indexing_service import RagIndexingService
+from src.application.rag.query_service import RagQueryService
 from src.core.knowledge.document_models import ChunkingOptions
 from src.core.knowledge.llamaindex_builder import build_default_embed_model
 from src.infrastructure.storage.qdrant_index_store import QdrantIndexStore, QdrantIndexStoreConfig

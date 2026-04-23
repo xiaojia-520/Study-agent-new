@@ -9,8 +9,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.application.rag_eval import build_session_registry, evaluate_cases, load_eval_cases
-from src.application.rag_runtime import build_rag_runtime
+from src.application.rag.eval import build_session_registry, evaluate_cases, load_eval_cases
+from src.application.rag.runtime import build_rag_runtime
 from web.backend.app.services.session_rag_query_service import SessionRagQueryService
 
 

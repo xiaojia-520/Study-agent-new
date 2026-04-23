@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from config.prompts import NO_CONTEXT_ANSWER, build_rag_cited_answer_prompt
-from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
+from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.core.knowledge.document_models import AnswerCitation, KnowledgeAnswer, SearchResult, TranscriptRecord
 from src.core.knowledge.query_filters import MetadataFilterClause, MetadataFilterSpec
 from web.backend.app.domain.session import RealtimeSession

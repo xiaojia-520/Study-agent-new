@@ -1,7 +1,7 @@
 import unittest
 
-from src.application.rag_indexing_service import RagIndexingService
-from src.application.rag_query_service import RagQueryService
+from src.application.rag.indexing_service import RagIndexingService
+from src.application.rag.query_service import RagQueryService
 from src.core.knowledge.document_models import ChunkingOptions, TranscriptRecord
 from src.core.knowledge.llamaindex_builder import build_llama_documents
 

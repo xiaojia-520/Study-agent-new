@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.application.rag_eval import EvalCase, load_eval_cases, score_eval_case
+from src.application.rag.eval import EvalCase, load_eval_cases, score_eval_case
 from src.core.knowledge.document_models import AnswerCitation, KnowledgeAnswer, SearchResult
 from web.backend.app.services.session_rag_query_service import QueryScope
 

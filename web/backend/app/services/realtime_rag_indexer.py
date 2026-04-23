@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from config.settings import settings
-from src.application.rag_runtime import close_shared_rag_runtime, get_shared_rag_runtime
+from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.core.knowledge.document_models import TranscriptRecord
 from web.backend.app.domain.session import RealtimeSession
 
