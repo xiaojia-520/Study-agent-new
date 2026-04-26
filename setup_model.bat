@@ -16,9 +16,12 @@ if not exist "models\asr" mkdir "models\asr"
 if not exist "models\vad" mkdir "models\vad"
 if not exist "models\punc" mkdir "models\punc"
 if not exist "models\embedding" mkdir "models\embedding"
+if not exist "models\ocr" mkdir "models\ocr"
+if not exist "models\vlm" mkdir "models\vlm"
+if not exist "models\yolo" mkdir "models\yolo"
 
 echo [3/5] Checking Python packages...
-python -c "import funasr, sentence_transformers, huggingface_hub, modelscope" >nul 2>nul
+python -c "import accelerate, funasr, huggingface_hub, modelscope, paddle, paddleocr, qwen_vl_utils, sentence_transformers, ultralytics" >nul 2>nul
 if errorlevel 1 (
     echo Installing required packages...
     python -m pip install -U pip

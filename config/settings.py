@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     EMBED_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "embedding")
     VAD_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "vad")
     PUNC_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "punc")
+    OCR_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "ocr")
+    VLM_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "vlm")
+    YOLO_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "yolo")
 
     AUDIO_SAMPLE_RATE: int = 16000
     AUDIO_CHANNELS: int = 1
@@ -45,6 +48,16 @@ class Settings(BaseSettings):
     PUNC_MODEL_NAME: str = str(PUNC_MODEL_DIR / "punc_ct-transformer_cn-en-common-vocab471067-large")
 
     EMBED_MODEL_NAME: Path = EMBED_MODEL_DIR / "bge-small-zh-v1.5"
+    OCR_DET_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_det"
+    OCR_REC_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_rec"
+    OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False
+    OCR_USE_DOC_UNWARPING: bool = False
+    OCR_USE_TEXTLINE_ORIENTATION: bool = True
+    VLM_MODEL_NAME: Path = VLM_MODEL_DIR / "Qwen2.5-VL-7B-Instruct"
+    VLM_DEVICE_MAP: str = "auto"
+    VLM_MAX_NEW_TOKENS: int = 512
+    YOLO_MODEL_NAME: Path = YOLO_MODEL_DIR / "yolo11s.pt"
+    YOLO_CONFIDENCE: float = 0.25
     VECTOR_DIM: int = 384
 
     QDRANT_URL: str = "http://localhost:6333"

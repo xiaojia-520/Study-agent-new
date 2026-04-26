@@ -11,6 +11,8 @@ pydantic-settings
 python-dotenv
 python-multipart
 requests
+huggingface_hub
+modelscope
 
 # Embedding runtime
 sentence-transformers
@@ -18,12 +20,20 @@ transformers
 torch
 openai
 numpy
+accelerate
 
 # ASR / audio pipeline
 funasr
 silero-vad
 sounddevice
 ffmpeg-python
+
+# Vision / OCR pipeline
+ultralytics
+paddlepaddle
+paddleocr
+qwen-vl-utils
+Pillow
 
 # Transcript persistence
 jsonlines
