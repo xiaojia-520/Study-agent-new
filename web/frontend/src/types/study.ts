@@ -12,6 +12,11 @@ export interface MicrophoneOption {
   label: string
 }
 
+export interface CameraOption {
+  id: string
+  label: string
+}
+
 export interface SessionInfo {
   session_id: string
   course_id: string
@@ -54,6 +59,10 @@ export interface TranscriptRecordItem {
   created_at?: number
   subject?: string
   source_type?: string
+  source_file?: string | null
+  start_ms?: number | null
+  end_ms?: number | null
+  metadata?: Record<string, unknown>
 }
 
 export interface TranscriptResponse {
@@ -194,6 +203,32 @@ export interface SessionVideoListResponse {
   lesson_id?: string
   count: number
   items: SessionVideoItem[]
+}
+
+export interface VisionRegion {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface VisionFrameResult {
+  region: string
+  text: string
+  status: string
+  chunk_id?: number | null
+  record_id?: number | null
+  error_message?: string | null
+}
+
+export interface VisionFrameResponse {
+  session_id: string
+  course_id?: string | null
+  lesson_id?: string | null
+  timestamp_ms?: number | null
+  captured_at_ms?: number | null
+  record_count: number
+  results: VisionFrameResult[]
 }
 
 export interface RealtimeEvent {

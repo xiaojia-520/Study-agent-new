@@ -13,6 +13,7 @@ from web.backend.app.services.session_lesson_summary_service import session_less
 from web.backend.app.services.session_rag_query_service import session_rag_query_service
 from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.session_video_service import session_video_service
+from web.backend.app.services.transcript_service import transcript_service
 
 app = FastAPI(title="Study Agent Backend")
 logger = get_logger("WebBackend")
@@ -33,6 +34,7 @@ app.include_router(ws_audio_router)
 async def warmup_models():
     logger.info("Backend startup: initializing SQLite storage")
     chat_memory_service.init_schema()
+    transcript_service.init_schema()
     lesson_asset_service.init_schema()
     session_video_service.init_schema()
     logger.info("Backend startup warmup: loading ASR model")

@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from config.settings import settings
+from src.application.rag.runtime import get_shared_rag_runtime
 from src.application.video.subtitle_service import VideoSubtitleService
+from src.core.knowledge.document_models import TranscriptRecord
+from src.core.knowledge.query_filters import MetadataFilterClause, MetadataFilterSpec
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.domain.session import RealtimeSession
 from web.backend.app.domain.video import LessonVideo
+from web.backend.app.services.transcript_service import TranscriptService, transcript_service
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +43,17 @@ class SessionVideoService:
         *,
         store: SQLiteStore = sqlite_store,
         subtitle_service: VideoSubtitleService | None = None,
+        transcript_writer: TranscriptService | None = None,
+        rag_runtime_factory=get_shared_rag_runtime,
+        rag_indexing_enabled: bool = settings.RAG_REALTIME_INDEXING_ENABLED,
     ) -> None:
         self.store = store
         self.subtitle_service = subtitle_service or VideoSubtitleService()
+        self.transcript_writer = transcript_writer or (
+            transcript_service if store is sqlite_store else TranscriptService(store=store)
+        )
+        self.rag_runtime_factory = rag_runtime_factory
+        self.rag_indexing_enabled = rag_indexing_enabled
 
     def init_schema(self) -> None:
         self.store.init_schema()
@@ -108,6 +120,8 @@ class SessionVideoService:
             raise ValueError("uploaded video exceeds size limit")
 
         now = int(time.time())
+        video_metadata = dict(metadata or {})
+        video_metadata.setdefault("session_created_at", session.created_at or now)
         self.store.execute(
             """
             INSERT INTO lesson_videos (
@@ -130,7 +144,7 @@ class SessionVideoService:
                 "uploaded",
                 now,
                 now,
-                _encode_json(metadata),
+                _encode_json(video_metadata),
             ),
         )
         video = self.get_video(video_id)
@@ -212,6 +226,11 @@ class SessionVideoService:
             srt_path=srt_path,
         )
         segments = [segment.to_dict() for segment in result.segments]
+        final_record_count = self._persist_final_transcript_records(
+            video=video,
+            segments=segments,
+            srt_path=result.srt_path,
+        )
         self._update_video(
             video.video_id,
             status="done",
@@ -221,8 +240,104 @@ class SessionVideoService:
             segment_count=len(segments),
             error_message=None,
             segments_json=_encode_json(segments),
-            metadata={"raw_result_count": len(result.raw_result)},
+            metadata={
+                "raw_result_count": len(result.raw_result),
+                "final_transcript_record_count": final_record_count,
+            },
         )
+        if final_record_count > 0:
+            self._rebuild_session_rag_index(video.session_id)
+
+    def _persist_final_transcript_records(
+        self,
+        *,
+        video: LessonVideo,
+        segments: list[dict[str, Any]],
+        srt_path: str,
+    ) -> int:
+        if not segments:
+            return 0
+
+        delete_existing = getattr(self.transcript_writer, "delete_final_video_transcripts", None)
+        if callable(delete_existing):
+            delete_existing(session_id=video.session_id, video_id=video.video_id)
+
+        next_chunk_id = self.transcript_writer.next_chunk_id(video.session_id)
+        recording_started_at_ms = _metadata_int(video.metadata, "recording_started_at_ms")
+        recording_started_at = _timeline_origin_seconds(video)
+        records: list[dict[str, Any]] = []
+
+        for segment_index, segment in enumerate(segments):
+            text = _normalize_text(segment.get("text"))
+            if not text:
+                continue
+
+            start_ms = max(0, _safe_int(segment.get("start_ms"), 0))
+            end_ms = max(start_ms + 200, _safe_int(segment.get("end_ms"), start_ms + 200))
+            created_at = recording_started_at + start_ms // 1000
+            record = {
+                "session_id": video.session_id,
+                "storage_id": f"offline-asr-{video.video_id}",
+                "course_id": video.course_id,
+                "lesson_id": video.lesson_id,
+                "chunk_id": next_chunk_id + len(records),
+                "subject": video.subject or "classroom audio",
+                "source_type": "video",
+                "source_file": video.file_name,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "text": text,
+                "clean_text": text,
+                "created_at": created_at,
+                "metadata": {
+                    "parser": "offline_funasr",
+                    "transcript_role": "final",
+                    "video_id": video.video_id,
+                    "segment_index": segment_index,
+                    "srt_path": srt_path,
+                    "timeline_ms": start_ms,
+                    "segment_start_ms": start_ms,
+                    "segment_end_ms": end_ms,
+                    "recording_started_at_ms": recording_started_at_ms,
+                    "recording_started_at": recording_started_at,
+                },
+            }
+            self.transcript_writer.append_transcript_record(record)
+            records.append(record)
+
+        return len(records)
+
+    def _rebuild_session_rag_index(self, session_id: str) -> None:
+        if not self.rag_indexing_enabled:
+            return
+
+        list_records = getattr(self.transcript_writer, "list_session_transcripts", None)
+        if not callable(list_records):
+            return
+
+        try:
+            payloads = list_records(None, session_id, prefer_final=True)
+            records = [
+                TranscriptRecord.from_dict(payload)
+                for payload in payloads
+                if _normalize_text(payload.get("clean_text") or payload.get("text"))
+            ]
+            if not records:
+                return
+
+            runtime = self.rag_runtime_factory()
+            runtime.index_store.delete_by_metadata(
+                MetadataFilterSpec(
+                    clauses=(MetadataFilterClause("session_id", session_id),),
+                )
+            )
+            runtime.indexing_service.index_records(
+                records,
+                embed_model=runtime.embed_model,
+            )
+            logger.info("Rebuilt final RAG index for session %s with %s records", session_id, len(records))
+        except Exception as exc:
+            logger.exception("Failed to rebuild final RAG index for session %s: %s", session_id, exc)
 
     def _update_video(self, video_id: str, **changes: Any) -> None:
         metadata = changes.pop("metadata", None)
@@ -293,6 +408,40 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _metadata_int(metadata: Mapping[str, Any], key: str) -> int | None:
+    return _optional_int(metadata.get(key))
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: Any, default: int) -> int:
+    parsed = _optional_int(value)
+    return default if parsed is None else parsed
+
+
+def _normalize_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _timeline_origin_seconds(video: LessonVideo) -> int:
+    recording_started_at_ms = _metadata_int(video.metadata, "recording_started_at_ms")
+    if recording_started_at_ms is not None and recording_started_at_ms > 0:
+        return recording_started_at_ms // 1000
+
+    session_created_at = _metadata_int(video.metadata, "session_created_at")
+    if session_created_at is not None and session_created_at > 0:
+        return session_created_at
+
+    return int(video.created_at or time.time())
 
 
 def _encode_json(value: Any) -> str | None:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -18,6 +20,7 @@ from web.backend.app.services.session_rag_query_service import QueryScope, sessi
 from web.backend.app.services.session_manager import session_manager
 from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.session_video_service import session_video_service, validate_video_file_name
+from web.backend.app.services.session_vision_service import session_vision_service
 from web.backend.app.services.transcript_service import transcript_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -199,6 +202,45 @@ async def get_session_messages(session_id: str):
     }
 
 
+@router.post("/{session_id}/vision-frame")
+async def upload_session_vision_frame(
+    session_id: str,
+    file: UploadFile = File(...),
+    regions: str = Form(...),
+    timestamp_ms: int | None = Form(default=None),
+    captured_at_ms: int | None = Form(default=None),
+):
+    session = session_manager.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+    media_type = file.content_type or ""
+    if media_type and not media_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="vision frame must be an image")
+
+    try:
+        region_payload = json.loads(regions)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="regions must be valid JSON") from exc
+    if not isinstance(region_payload, dict):
+        raise HTTPException(status_code=422, detail="regions must be a JSON object")
+
+    try:
+        image_bytes = await file.read()
+        return await asyncio.to_thread(
+            session_vision_service.process_frame,
+            session=session,
+            image_bytes=image_bytes,
+            regions=region_payload,
+            timestamp_ms=timestamp_ms,
+            captured_at_ms=captured_at_ms,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
 @router.post("/{session_id}/assets")
 async def upload_session_asset(
     session_id: str,
@@ -269,6 +311,8 @@ async def upload_session_video(
     session_id: str,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    recording_started_at_ms: int | None = Form(default=None),
+    recording_ended_at_ms: int | None = Form(default=None),
 ):
     session = session_manager.get_session(session_id)
     if session is None:
@@ -299,7 +343,11 @@ async def upload_session_video(
             file_path=target_path,
             file_size=file_size,
             media_type=file.content_type or "application/octet-stream",
-            metadata={"original_file_name": file_name},
+            metadata={
+                "original_file_name": file_name,
+                "recording_started_at_ms": recording_started_at_ms,
+                "recording_ended_at_ms": recording_ended_at_ms,
+            },
         )
     except ValueError as exc:
         if target_path is not None:

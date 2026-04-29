@@ -15,6 +15,9 @@ from web.backend.app.domain.session import RealtimeSession
 
 logger = logging.getLogger(__name__)
 
+_FINAL_TRANSCRIPT_PARSERS = {"offline_funasr"}
+_FINAL_TRANSCRIPT_ROLES = {"final", "final_subtitle"}
+
 
 class TranscriptService:
     """Manage realtime transcript persistence for websocket sessions."""
@@ -120,10 +123,16 @@ class TranscriptService:
             return 1
         return int(rows[0]["max_chunk_id"]) + 1
 
-    def list_session_transcripts(self, session: RealtimeSession | None, session_id: str):
+    def list_session_transcripts(
+        self,
+        session: RealtimeSession | None,
+        session_id: str,
+        *,
+        prefer_final: bool = True,
+    ):
         sqlite_records = self._list_session_transcripts_from_sqlite(session_id)
         if sqlite_records:
-            return sqlite_records
+            return _prefer_final_transcripts(sqlite_records) if prefer_final else sqlite_records
 
         file_path = self._resolve_file_path(session, session_id)
         if file_path is None or not file_path.exists():
@@ -136,12 +145,18 @@ class TranscriptService:
                 if not line:
                     continue
                 records.append(json.loads(line))
-        return records
+        return _prefer_final_transcripts(records) if prefer_final else records
 
-    def list_lesson_transcripts(self, *, course_id: str, lesson_id: str):
+    def list_lesson_transcripts(
+        self,
+        *,
+        course_id: str,
+        lesson_id: str,
+        prefer_final: bool = True,
+    ):
         sqlite_records = self._list_lesson_transcripts_from_sqlite(course_id=course_id, lesson_id=lesson_id)
         if sqlite_records:
-            return sqlite_records
+            return _prefer_final_transcripts(sqlite_records) if prefer_final else sqlite_records
 
         records = []
         for file_path in sorted(settings.TRANSCRIPT_SAVE_DIR.glob("*.jsonl")):
@@ -157,14 +172,19 @@ class TranscriptService:
             except (OSError, json.JSONDecodeError):
                 logger.warning("Failed to read transcript file %s", file_path, exc_info=True)
 
-        records.sort(
-            key=lambda item: (
-                int(item.get("created_at") or 0),
-                str(item.get("session_id") or ""),
-                int(item.get("chunk_id") or 0),
-            )
+        records = _sort_transcript_records(records)
+        return _prefer_final_transcripts(records) if prefer_final else records
+
+    def delete_final_video_transcripts(self, *, session_id: str, video_id: str) -> None:
+        self.store.execute(
+            """
+            DELETE FROM transcript_records
+            WHERE session_id = ?
+              AND source_type = 'video'
+              AND metadata_json LIKE ?
+            """,
+            (session_id, f'%"video_id": "{video_id}"%'),
         )
-        return records
 
     def _list_session_transcripts_from_sqlite(self, session_id: str) -> list[dict[str, Any]]:
         rows = self.store.query_all(
@@ -245,6 +265,87 @@ def _decode_metadata(value: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _prefer_final_transcripts(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    final_session_ids = {
+        str(record.get("session_id") or "")
+        for record in records
+        if _is_final_transcript(record)
+    }
+    if not final_session_ids:
+        return _sort_transcript_records(records)
+
+    preferred = [
+        record
+        for record in records
+        if str(record.get("session_id") or "") not in final_session_ids
+        or not _is_realtime_transcript(record)
+    ]
+    return _sort_transcript_records(preferred)
+
+
+def _is_realtime_transcript(record: Mapping[str, Any]) -> bool:
+    return str(record.get("source_type") or "").lower() == "realtime"
+
+
+def _is_final_transcript(record: Mapping[str, Any]) -> bool:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    parser = str(metadata.get("parser") or "").lower()
+    role = str(metadata.get("transcript_role") or "").lower()
+    return parser in _FINAL_TRANSCRIPT_PARSERS or role in _FINAL_TRANSCRIPT_ROLES
+
+
+def _sort_transcript_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        records,
+        key=lambda item: (
+            _record_sort_ms(item),
+            str(item.get("session_id") or ""),
+            _record_timeline_ms(item),
+            int(item.get("chunk_id") or 0),
+            int(item.get("id") or 0),
+        ),
+    )
+
+
+def _record_sort_ms(record: Mapping[str, Any]) -> int:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+
+    timeline_ms = _record_timeline_ms(record)
+    recording_started_at_ms = _optional_int(metadata.get("recording_started_at_ms"))
+    if recording_started_at_ms is not None and recording_started_at_ms > 0:
+        return recording_started_at_ms + timeline_ms
+
+    frame_captured_at_ms = _optional_int(metadata.get("frame_captured_at_ms"))
+    if frame_captured_at_ms is not None and frame_captured_at_ms > 0:
+        return frame_captured_at_ms
+
+    created_at_ms = max(0, int(record.get("created_at") or 0) * 1000)
+    start_ms = _optional_int(record.get("start_ms"))
+    if start_ms is not None and start_ms >= 0:
+        return created_at_ms + start_ms % 1000
+    return created_at_ms
+
+
+def _record_timeline_ms(record: Mapping[str, Any]) -> int:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+
+    for value in (
+        metadata.get("timeline_ms"),
+        record.get("start_ms"),
+        metadata.get("frame_timestamp_ms"),
+    ):
+        parsed = _optional_int(value)
+        if parsed is not None:
+            return max(0, parsed)
+    return max(0, int(record.get("created_at") or 0) * 1000)
 
 
 def _row_to_transcript_record(row: Mapping[str, Any]) -> dict[str, Any]:

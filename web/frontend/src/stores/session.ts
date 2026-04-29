@@ -6,6 +6,7 @@ import {
   defaultBackendBaseUrl,
 } from '../api/studyAgent'
 import type {
+  CameraOption,
   LessonAssetItem,
   MicrophoneOption,
   ModelKey,
@@ -16,6 +17,7 @@ import type {
   WebSocketState,
 } from '../types/study'
 import { createLessonAssetActions } from './session/assets'
+import { createCameraActions } from './session/cameras'
 import {
   defaultChannels,
   defaultSampleRate,
@@ -42,9 +44,12 @@ export const useSessionStore = defineStore('session', () => {
   const modelOptions = ref<ModelOption[]>([...sessionModelOptions])
   const microphone = ref('default')
   const microphones = ref<MicrophoneOption[]>([{ id: 'default', label: '默认麦克风' }])
+  const camera = ref('default')
+  const cameras = ref<CameraOption[]>([{ id: 'default', label: '默认摄像头' }])
   const recording = ref(false)
   const initializing = ref(false)
   const loadingMicrophones = ref(false)
+  const loadingCameras = ref(false)
   const websocketState = ref<WebSocketState>('closed')
   const errorMessage = ref('')
   const partialTranscript = ref('')
@@ -277,6 +282,13 @@ export const useSessionStore = defineStore('session', () => {
     errorMessage,
   })
 
+  const { fetchCameras } = createCameraActions({
+    camera,
+    cameras,
+    loadingCameras,
+    errorMessage,
+  })
+
   const {
     refreshSessionAssets,
     uploadLessonAsset,
@@ -327,15 +339,19 @@ export const useSessionStore = defineStore('session', () => {
     audioPeak,
     audioRms,
     backendBaseUrl,
+    camera,
+    cameras,
     cleanup,
     currentCourseId,
     currentLessonId,
     currentSessionId,
     dismissRefineStatusToast,
     errorMessage,
+    fetchCameras,
     fetchMicrophones,
     refreshSessionAssets,
     initializing,
+    loadingCameras,
     loadingMicrophones,
     microphone,
     microphones,

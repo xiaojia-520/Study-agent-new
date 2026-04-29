@@ -124,7 +124,7 @@ def build_chunks_for_session(
 def _sort_records(records: Iterable[TranscriptRecord]) -> list[TranscriptRecord]:
     return sorted(
         records,
-        key=lambda record: (record.session_id, record.chunk_id, record.created_at, record.record_id),
+        key=lambda record: (record.session_id, record.created_at, record.chunk_id, record.record_id),
     )
 
 

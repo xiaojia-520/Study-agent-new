@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import { useSessionStore } from '../stores/session'
@@ -13,7 +13,10 @@ const {
   assetErrorMessage,
   assetList,
   assetUploading,
+  camera,
+  cameras,
   errorMessage,
+  loadingCameras,
   microphone,
   microphones,
   model,
@@ -29,6 +32,12 @@ const assetInputRef = ref<HTMLInputElement | null>(null)
 
 onMounted(() => {
   void sessionStore.fetchMicrophones()
+  void sessionStore.fetchCameras()
+  navigator.mediaDevices?.addEventListener?.('devicechange', sessionStore.fetchCameras)
+})
+
+onBeforeUnmount(() => {
+  navigator.mediaDevices?.removeEventListener?.('devicechange', sessionStore.fetchCameras)
 })
 
 function openAssetPicker(): void {
@@ -127,6 +136,19 @@ function formatFileSize(size: number): string {
             class="w-full rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-2.5 outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
           >
             <option v-for="item in microphones" :key="item.id" :value="item.id">
+              {{ item.label }}
+            </option>
+          </select>
+        </label>
+
+        <label class="block space-y-2">
+          <span class="text-sm font-medium text-[rgb(var(--text-subtle))]">摄像头选择</span>
+          <select
+            v-model="camera"
+            class="w-full rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-2.5 outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)] disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="loadingCameras || recording"
+          >
+            <option v-for="item in cameras" :key="item.id" :value="item.id">
               {{ item.label }}
             </option>
           </select>

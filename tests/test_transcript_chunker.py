@@ -115,6 +115,16 @@ class TranscriptChunkerTests(unittest.TestCase):
         self.assertEqual(list(grouped.keys()), ["session-a", "session-b"])
         self.assertEqual([record.chunk_id for record in grouped["session-a"]], [1, 2])
 
+    def test_group_records_by_session_prefers_capture_time_over_late_chunk_id(self) -> None:
+        records = [
+            self._record(session_id="session-a", chunk_id=2, text="later speech", created_at=200),
+            self._record(session_id="session-a", chunk_id=3, text="earlier frame", created_at=150),
+        ]
+
+        grouped = group_records_by_session(records)
+
+        self.assertEqual([record.content for record in grouped["session-a"]], ["earlier frame", "later speech"])
+
     def test_build_chunks_for_session_applies_overlap(self) -> None:
         records = [
             self._record(chunk_id=1, text="aaaa"),

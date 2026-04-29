@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from config.settings import settings
-from src.core.knowledge.query_filters import MetadataFilterSpec
+from src.core.knowledge.query_filters import MetadataFilterClause, MetadataFilterSpec
 
 
 @dataclass(slots=True)
@@ -174,6 +174,41 @@ class QdrantIndexStore:
         if client.collection_exists(collection_name=self.config.collection_name):
             client.delete_collection(collection_name=self.config.collection_name)
 
+    def delete_by_metadata(self, filters: MetadataFilterSpec | Sequence[MetadataFilterClause]) -> None:
+        spec = filters if isinstance(filters, MetadataFilterSpec) else MetadataFilterSpec(clauses=tuple(filters))
+        if spec.condition != "and":
+            raise ValueError("Qdrant metadata deletion only supports AND filters")
+
+        client = self.get_client()
+        if not client.collection_exists(collection_name=self.config.collection_name):
+            return
+
+        field_condition_cls, filter_cls, filter_selector_cls, match_value_cls = self._load_qdrant_filter_types()
+        must = []
+        must_not = []
+        for clause in spec.clauses:
+            condition = field_condition_cls(
+                key=clause.key,
+                match=match_value_cls(value=clause.value),
+            )
+            if clause.operator == "eq":
+                must.append(condition)
+            elif clause.operator == "ne":
+                must_not.append(condition)
+            else:
+                raise ValueError(f"unsupported metadata deletion operator: {clause.operator}")
+
+        client.delete(
+            collection_name=self.config.collection_name,
+            points_selector=filter_selector_cls(
+                filter=filter_cls(
+                    must=must or None,
+                    must_not=must_not or None,
+                )
+            ),
+            wait=True,
+        )
+
     def close(self) -> None:
         client = self._client
         if client is None:
@@ -220,6 +255,14 @@ class QdrantIndexStore:
                 "llama-index-core is required for metadata filters. Install llama-index-core."
             ) from exc
         return MetadataFilter, MetadataFilters, FilterCondition, FilterOperator
+
+    @staticmethod
+    def _load_qdrant_filter_types() -> tuple[type[Any], type[Any], type[Any], type[Any]]:
+        try:
+            from qdrant_client.http.models import FieldCondition, Filter, FilterSelector, MatchValue
+        except ImportError as exc:
+            raise ImportError("qdrant-client is required for metadata deletion.") from exc
+        return FieldCondition, Filter, FilterSelector, MatchValue
 
     def _get_collection_vector_dim(self, client: Any) -> int | None:
         collection_info = client.get_collection(collection_name=self.config.collection_name)

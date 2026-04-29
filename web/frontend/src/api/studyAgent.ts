@@ -11,6 +11,8 @@ import type {
   SessionVideoListResponse,
   SessionVideoResponse,
   TranscriptResponse,
+  VisionFrameResponse,
+  VisionRegion,
 } from '../types/study'
 
 export const defaultBackendBaseUrl =
@@ -86,6 +88,11 @@ async function requestJson<T>(
   return (body ?? {}) as T
 }
 
+export interface UploadSessionVideoOptions {
+  recordingStartedAtMs?: number
+  recordingEndedAtMs?: number
+}
+
 export function createSession(payload: CreateSessionPayload, baseUrl = defaultBackendBaseUrl) {
   return requestJson<SessionInfo>(
     '/sessions',
@@ -145,9 +152,20 @@ export function fetchLessonAsset(assetId: string, baseUrl = defaultBackendBaseUr
   )
 }
 
-export function uploadSessionVideo(sessionId: string, file: File, baseUrl = defaultBackendBaseUrl) {
+export function uploadSessionVideo(
+  sessionId: string,
+  file: File,
+  baseUrl = defaultBackendBaseUrl,
+  options: UploadSessionVideoOptions = {},
+) {
   const body = new FormData()
   body.append('file', file)
+  if (typeof options.recordingStartedAtMs === 'number' && Number.isFinite(options.recordingStartedAtMs)) {
+    body.append('recording_started_at_ms', String(Math.max(0, Math.round(options.recordingStartedAtMs))))
+  }
+  if (typeof options.recordingEndedAtMs === 'number' && Number.isFinite(options.recordingEndedAtMs)) {
+    body.append('recording_ended_at_ms', String(Math.max(0, Math.round(options.recordingEndedAtMs))))
+  }
   return requestJson<SessionVideoResponse>(
     `/sessions/${sessionId}/videos`,
     {
@@ -196,6 +214,34 @@ export function fetchLessonVideos(
       method: 'GET',
     },
     '获取历史课堂视频失败',
+    baseUrl,
+  )
+}
+
+export function uploadVisionFrame(
+  sessionId: string,
+  file: Blob,
+  regions: Partial<Record<'ppt' | 'blackboard', VisionRegion>>,
+  timestampMs?: number,
+  capturedAtMs?: number,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const body = new FormData()
+  body.append('file', file, `vision-frame-${Date.now()}.jpg`)
+  body.append('regions', JSON.stringify(regions))
+  if (typeof timestampMs === 'number' && Number.isFinite(timestampMs)) {
+    body.append('timestamp_ms', String(Math.max(0, Math.round(timestampMs))))
+  }
+  if (typeof capturedAtMs === 'number' && Number.isFinite(capturedAtMs)) {
+    body.append('captured_at_ms', String(Math.max(0, Math.round(capturedAtMs))))
+  }
+  return requestJson<VisionFrameResponse>(
+    `/sessions/${sessionId}/vision-frame`,
+    {
+      method: 'POST',
+      body,
+    },
+    '上传视觉帧失败',
     baseUrl,
   )
 }

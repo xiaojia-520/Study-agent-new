@@ -39,6 +39,29 @@ class _FakeSubtitleService:
         )
 
 
+class _FakeIndexStore:
+    def __init__(self):
+        self.deleted_filters = []
+
+    def delete_by_metadata(self, filters):
+        self.deleted_filters.append(filters)
+
+
+class _FakeIndexingService:
+    def __init__(self):
+        self.indexed_records = []
+
+    def index_records(self, records, **_kwargs):
+        self.indexed_records.append(list(records))
+
+
+class _FakeRagRuntime:
+    def __init__(self):
+        self.index_store = _FakeIndexStore()
+        self.indexing_service = _FakeIndexingService()
+        self.embed_model = object()
+
+
 def test_session_video_service_processes_and_persists_segments(tmp_path, monkeypatch):
     from config.settings import settings
 
@@ -46,6 +69,7 @@ def test_session_video_service_processes_and_persists_segments(tmp_path, monkeyp
     service = SessionVideoService(
         store=SQLiteStore(tmp_path / "study.sqlite3"),
         subtitle_service=_FakeSubtitleService(),
+        rag_indexing_enabled=False,
     )
     service.init_schema()
 
@@ -76,11 +100,71 @@ def test_session_video_service_processes_and_persists_segments(tmp_path, monkeyp
     assert processed.srt_path is not None
     assert Path(processed.srt_path).exists()
 
+    transcripts = service.transcript_writer.list_session_transcripts(None, "session-1")
+    assert [item["clean_text"] for item in transcripts] == ["hello"]
+    assert transcripts[0]["source_type"] == "video"
+    assert transcripts[0]["metadata"]["parser"] == "offline_funasr"
+    assert transcripts[0]["metadata"]["transcript_role"] == "final"
+    assert transcripts[0]["metadata"]["video_id"] == "video-1"
+
+
+def test_session_video_service_rebuilds_rag_with_final_transcripts(tmp_path, monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "VIDEO_SUBTITLE_DIR", tmp_path / "subtitles")
+    runtime = _FakeRagRuntime()
+    service = SessionVideoService(
+        store=SQLiteStore(tmp_path / "study.sqlite3"),
+        subtitle_service=_FakeSubtitleService(),
+        rag_runtime_factory=lambda: runtime,
+        rag_indexing_enabled=True,
+    )
+    service.init_schema()
+    service.transcript_writer.append_transcript_record(
+        {
+            "session_id": "session-1",
+            "course_id": "course-1",
+            "lesson_id": "lesson-1",
+            "chunk_id": 1,
+            "subject": "demo",
+            "source_type": "realtime",
+            "text": "draft",
+            "clean_text": "draft",
+            "created_at": 100,
+        }
+    )
+
+    video_path = tmp_path / "lesson.webm"
+    video_path.write_bytes(b"fake video")
+    session = RealtimeSession(
+        session_id="session-1",
+        course_id="course-1",
+        lesson_id="lesson-1",
+        subject="demo",
+    )
+    video = service.create_video(
+        video_id="video-1",
+        session=session,
+        file_name="lesson.webm",
+        file_path=video_path,
+        file_size=video_path.stat().st_size,
+        media_type="video/webm",
+    )
+
+    service.process_video(video.video_id)
+
+    assert len(runtime.index_store.deleted_filters) == 1
+    assert len(runtime.indexing_service.indexed_records) == 1
+    indexed_records = runtime.indexing_service.indexed_records[0]
+    assert [record.content for record in indexed_records] == ["hello"]
+    assert indexed_records[0].metadata["parser"] == "offline_funasr"
+
 
 def test_session_video_service_lists_lesson_videos(tmp_path):
     service = SessionVideoService(
         store=SQLiteStore(tmp_path / "study.sqlite3"),
         subtitle_service=_FakeSubtitleService(),
+        rag_indexing_enabled=False,
     )
     service.init_schema()
 

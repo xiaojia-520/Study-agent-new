@@ -6,14 +6,18 @@ import {
   buildApiUrl,
   fetchSessionVideo,
   fetchSessionVideos,
+  uploadVisionFrame,
   uploadSessionVideo,
 } from '../api/studyAgent'
 import { useSessionStore } from '../stores/session'
-import type { SessionVideoItem, VideoSubtitleSegment } from '../types/study'
+import type { SessionVideoItem, VideoSubtitleSegment, VisionRegion } from '../types/study'
+
+type VisionRegionKey = 'ppt' | 'blackboard'
 
 const sessionStore = useSessionStore()
 const {
   backendBaseUrl,
+  camera,
   currentCourseId,
   currentLessonId,
   currentSessionId,
@@ -23,6 +27,7 @@ const {
 
 const videoRef = ref<HTMLVideoElement | null>(null)
 const previewHostRef = ref<HTMLElement | null>(null)
+const frameRef = ref<HTMLElement | null>(null)
 const cameraStream = ref<MediaStream | null>(null)
 const loadingCamera = ref(false)
 const cameraError = ref('')
@@ -33,6 +38,15 @@ const loadingHistoryVideo = ref(false)
 const selectedVideo = ref<SessionVideoItem | null>(null)
 const videoSourceUrl = ref('')
 const videoStatusMessage = ref('')
+const activeRegionTool = ref<VisionRegionKey | null>(null)
+const draftVisionRegion = ref<VisionRegion | null>(null)
+const visionRegions = ref<Partial<Record<VisionRegionKey, VisionRegion>>>({})
+const visionUploading = ref(false)
+const visionEnabled = ref(true)
+const visionFrameCount = ref(0)
+const visionRecordCount = ref(0)
+const visionError = ref('')
+const visionStatusMessage = ref('')
 
 const frameStyle = ref({
   width: '0px',
@@ -112,12 +126,151 @@ let activeMimeType = ''
 let recordingSessionId = ''
 let pollTimer: number | null = null
 let localVideoObjectUrl = ''
+let visionCaptureTimer: number | null = null
+let visionRecordingStartedAt = 0
+let videoRecordingStartedAt = 0
+let regionDragStart: { region: VisionRegionKey; x: number; y: number } | null = null
+let switchingCamera = false
+
+const visionRegionEntries = computed(() =>
+  (Object.entries(visionRegions.value) as [VisionRegionKey, VisionRegion][])
+    .filter(([, region]) => Boolean(region)),
+)
+
+const visibleVisionRegions = computed(() => {
+  const items = visionRegionEntries.value.map(([region, box]) => ({ region, box, draft: false }))
+  if (activeRegionTool.value && draftVisionRegion.value) {
+    items.push({ region: activeRegionTool.value, box: draftVisionRegion.value, draft: true })
+  }
+  return items
+})
+
+const visionRegionSummary = computed(() => {
+  const names = visionRegionEntries.value.map(([region]) => regionLabel(region))
+  return names.length ? names.join(' / ') : '未框选'
+})
 
 function clearPollTimer(): void {
   if (pollTimer !== null) {
     window.clearTimeout(pollTimer)
     pollTimer = null
   }
+}
+
+function clearVisionCaptureTimer(): void {
+  if (visionCaptureTimer !== null) {
+    window.clearInterval(visionCaptureTimer)
+    visionCaptureTimer = null
+  }
+}
+
+function regionLabel(region: VisionRegionKey): string {
+  return region === 'ppt' ? 'PPT区' : '黑板区'
+}
+
+function regionStyle(region: VisionRegion): Record<string, string> {
+  return {
+    left: `${region.x * 100}%`,
+    top: `${region.y * 100}%`,
+    width: `${region.w * 100}%`,
+    height: `${region.h * 100}%`,
+  }
+}
+
+function selectRegionTool(region: VisionRegionKey): void {
+  activeRegionTool.value = activeRegionTool.value === region ? null : region
+  draftVisionRegion.value = null
+}
+
+function clearVisionRegions(): void {
+  activeRegionTool.value = null
+  draftVisionRegion.value = null
+  regionDragStart = null
+  visionRegions.value = {}
+  visionStatusMessage.value = ''
+  visionError.value = ''
+}
+
+function pointerToNormalizedPoint(event: PointerEvent): { x: number; y: number } | null {
+  const frame = frameRef.value
+  if (!frame) {
+    return null
+  }
+
+  const bounds = frame.getBoundingClientRect()
+  if (bounds.width <= 0 || bounds.height <= 0) {
+    return null
+  }
+
+  return {
+    x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+    y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+  }
+}
+
+function buildRegionFromPoints(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): VisionRegion {
+  const x = Math.min(start.x, end.x)
+  const y = Math.min(start.y, end.y)
+  return {
+    x,
+    y,
+    w: Math.abs(end.x - start.x),
+    h: Math.abs(end.y - start.y),
+  }
+}
+
+function handleVisionPointerDown(event: PointerEvent): void {
+  if (!activeRegionTool.value) {
+    return
+  }
+  const point = pointerToNormalizedPoint(event)
+  if (!point) {
+    return
+  }
+
+  event.preventDefault()
+  regionDragStart = { region: activeRegionTool.value, ...point }
+  draftVisionRegion.value = { x: point.x, y: point.y, w: 0, h: 0 }
+  window.addEventListener('pointermove', handleVisionPointerMove)
+  window.addEventListener('pointerup', finishVisionRegionSelection)
+}
+
+function handleVisionPointerMove(event: PointerEvent): void {
+  if (!regionDragStart) {
+    return
+  }
+  const point = pointerToNormalizedPoint(event)
+  if (!point) {
+    return
+  }
+  draftVisionRegion.value = buildRegionFromPoints(regionDragStart, point)
+}
+
+function finishVisionRegionSelection(): void {
+  window.removeEventListener('pointermove', handleVisionPointerMove)
+  window.removeEventListener('pointerup', finishVisionRegionSelection)
+
+  if (!regionDragStart || !draftVisionRegion.value) {
+    regionDragStart = null
+    draftVisionRegion.value = null
+    return
+  }
+
+  const region = draftVisionRegion.value
+  if (region.w >= 0.03 && region.h >= 0.03) {
+    visionRegions.value = {
+      ...visionRegions.value,
+      [regionDragStart.region]: region,
+    }
+    visionStatusMessage.value = `${regionLabel(regionDragStart.region)}已框选，录制时会自动解析。`
+  }
+
+  regionDragStart = null
+  draftVisionRegion.value = null
+  activeRegionTool.value = null
 }
 
 function revokeLocalVideoUrl(): void {
@@ -144,6 +297,91 @@ function setRemotePlaybackSource(video: SessionVideoItem): void {
   videoSourceUrl.value = buildApiUrl(video.video_url, backendBaseUrl.value)
 }
 
+function startVisionCaptureTimer(startedAtMs = Date.now()): void {
+  clearVisionCaptureTimer()
+  visionRecordingStartedAt = startedAtMs
+  visionStatusMessage.value = visionRegionEntries.value.length
+    ? `视觉识别已启动：${visionRegionSummary.value}`
+    : '视觉识别等待框选区域。'
+  visionCaptureTimer = window.setInterval(() => {
+    void captureAndUploadVisionFrame()
+  }, 8000)
+  window.setTimeout(() => {
+    void captureAndUploadVisionFrame()
+  }, 1200)
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.82)
+  })
+}
+
+async function captureAndUploadVisionFrame(): Promise<void> {
+  if (!visionEnabled.value || visionUploading.value || !recordingVideo.value) {
+    return
+  }
+  if (!currentSessionId.value || !cameraEnabled.value || visionRegionEntries.value.length === 0) {
+    return
+  }
+
+  const capturedAtMs = Date.now()
+  const video = videoRef.value
+  if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const context = canvas.getContext('2d')
+  if (!context) {
+    return
+  }
+  context.drawImage(video, 0, 0, canvas.width, canvas.height)
+  const blob = await canvasToBlob(canvas)
+  if (!blob) {
+    return
+  }
+
+  visionUploading.value = true
+  visionError.value = ''
+  try {
+    const regions = Object.fromEntries(visionRegionEntries.value) as Partial<
+      Record<VisionRegionKey, VisionRegion>
+    >
+    const timestampMs = Math.max(0, capturedAtMs - visionRecordingStartedAt)
+    const response = await uploadVisionFrame(
+      currentSessionId.value,
+      blob,
+      regions,
+      timestampMs,
+      capturedAtMs,
+      backendBaseUrl.value,
+    )
+    visionFrameCount.value += 1
+    visionRecordCount.value += response.record_count
+
+    const indexedRegions = response.results
+      .filter((item) => item.status === 'indexed')
+      .map((item) => regionLabel(item.region as VisionRegionKey))
+    const failedRegions = response.results
+      .filter((item) => item.status === 'failed')
+      .map((item) => `${regionLabel(item.region as VisionRegionKey)}：${item.error_message || '失败'}`)
+
+    if (failedRegions.length > 0) {
+      visionError.value = failedRegions.join('；')
+    }
+    visionStatusMessage.value = indexedRegions.length
+      ? `已入库 ${indexedRegions.join('、')}，累计 ${visionRecordCount.value} 条视觉记录。`
+      : `已分析第 ${visionFrameCount.value} 帧，暂无新增内容。`
+  } catch (error) {
+    visionError.value = error instanceof Error ? error.message : '上传视觉帧失败。'
+  } finally {
+    visionUploading.value = false
+  }
+}
+
 async function attachStream(stream: MediaStream): Promise<void> {
   if (!videoRef.value) {
     return
@@ -151,6 +389,23 @@ async function attachStream(stream: MediaStream): Promise<void> {
   videoRef.value.srcObject = stream
   videoRef.value.muted = true
   await videoRef.value.play()
+}
+
+function buildVideoConstraints(): MediaTrackConstraints {
+  const base: MediaTrackConstraints = {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+  }
+  if (camera.value && camera.value !== 'default') {
+    return {
+      ...base,
+      deviceId: { exact: camera.value },
+    }
+  }
+  return {
+    ...base,
+    facingMode: 'user',
+  }
 }
 
 function stopCameraStream(): void {
@@ -179,11 +434,7 @@ async function startCameraPreview(): Promise<void> {
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: 'user',
-      },
+      video: buildVideoConstraints(),
     })
     cameraStream.value = stream
     await attachStream(stream)
@@ -205,6 +456,23 @@ function toggleCameraPreview(): void {
   }
   void startCameraPreview()
 }
+
+watch(camera, async (nextDevice, previousDevice) => {
+  if (!nextDevice || nextDevice === previousDevice || recordingVideo.value || !cameraEnabled.value) {
+    return
+  }
+  if (switchingCamera) {
+    return
+  }
+
+  switchingCamera = true
+  try {
+    stopCameraStream()
+    await startCameraPreview()
+  } finally {
+    switchingCamera = false
+  }
+})
 
 function selectSupportedMimeType(): string {
   if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) {
@@ -252,6 +520,7 @@ async function startVideoRecording(): Promise<void> {
   recordedChunks = []
   activeMimeType = selectSupportedMimeType()
   recordingSessionId = currentSessionId.value
+  videoRecordingStartedAt = 0
 
   try {
     stopCameraStream()
@@ -261,11 +530,7 @@ async function startVideoRecording(): Promise<void> {
         noiseSuppression: false,
         autoGainControl: false,
       },
-      video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: 'user',
-      },
+      video: buildVideoConstraints(),
     })
 
     cameraStream.value = stream
@@ -286,19 +551,24 @@ async function startVideoRecording(): Promise<void> {
     mediaRecorder.onstop = () => {
       void handleRecorderStopped()
     }
+    videoRecordingStartedAt = Date.now()
     mediaRecorder.start(1000)
     recordingVideo.value = true
     selectedVideo.value = null
     videoStatusMessage.value = '视频正在随课堂录音同步录制。'
+    startVisionCaptureTimer(videoRecordingStartedAt)
   } catch (error) {
     recordingVideo.value = false
+    videoRecordingStartedAt = 0
     mediaRecorder = null
+    clearVisionCaptureTimer()
     stopCameraStream()
     cameraError.value = error instanceof Error ? error.message : '启动视频录制失败。'
   }
 }
 
 function stopVideoRecording(): void {
+  clearVisionCaptureTimer()
   if (!mediaRecorder) {
     recordingVideo.value = false
     stopCameraStream()
@@ -351,7 +621,10 @@ async function uploadRecordedVideo(
     const extension = fileExtensionForMimeType(effectiveMimeType)
     const fileName = `classroom-video-${sessionId}-${Date.now()}.${extension}`
     const file = new File([blob], fileName, { type: effectiveMimeType })
-    const response = await uploadSessionVideo(sessionId, file, backendBaseUrl.value)
+    const response = await uploadSessionVideo(sessionId, file, backendBaseUrl.value, {
+      recordingStartedAtMs: videoRecordingStartedAt || undefined,
+      recordingEndedAtMs: Date.now(),
+    })
 
     selectedVideo.value = response.item
     uploadingVideo.value = false
@@ -478,6 +751,10 @@ watch(
   currentSessionId,
   (sessionId) => {
     clearPollTimer()
+    visionError.value = ''
+    visionStatusMessage.value = ''
+    visionFrameCount.value = 0
+    visionRecordCount.value = 0
     if (!sessionId) {
       selectedVideo.value = null
       processingVideo.value = false
@@ -504,6 +781,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   clearPollTimer()
+  clearVisionCaptureTimer()
+  window.removeEventListener('pointermove', handleVisionPointerMove)
+  window.removeEventListener('pointerup', finishVisionRegionSelection)
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop()
   }
@@ -544,6 +824,7 @@ onBeforeUnmount(() => {
         class="flex flex-1 items-center justify-center overflow-hidden"
       >
         <div
+          ref="frameRef"
           class="relative flex-none overflow-hidden rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.1)] bg-[#111827]"
           :style="frameStyle"
         >
@@ -575,6 +856,29 @@ onBeforeUnmount(() => {
               {{ connectionLabel }}
             </span>
           </div>
+
+          <div
+            class="absolute inset-0"
+            :class="activeRegionTool ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
+            @pointerdown="handleVisionPointerDown"
+          >
+            <div
+              v-for="item in visibleVisionRegions"
+              :key="`${item.region}-${item.draft ? 'draft' : 'saved'}`"
+              class="absolute rounded-sm border-2"
+              :class="[
+                item.region === 'ppt' ? 'border-sky-300 bg-sky-300/10' : 'border-emerald-300 bg-emerald-300/10',
+                item.draft ? 'border-dashed' : 'border-solid',
+              ]"
+              :style="regionStyle(item.box)"
+            >
+              <span
+                class="absolute left-1 top-1 rounded bg-black/55 px-2 py-0.5 text-[11px] font-semibold text-white"
+              >
+                {{ regionLabel(item.region) }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -591,6 +895,56 @@ onBeforeUnmount(() => {
       >
         {{ videoStatusMessage }}
       </p>
+
+      <div class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgba(var(--bg-muted),0.45)] p-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="rounded-[var(--radius-soft)] px-3 py-1.5 text-xs font-semibold transition"
+            :class="activeRegionTool === 'ppt' ? 'bg-sky-500 text-white' : 'bg-sky-500/10 text-sky-700 hover:bg-sky-500/20'"
+            @click="selectRegionTool('ppt')"
+          >
+            框选PPT区
+          </button>
+          <button
+            type="button"
+            class="rounded-[var(--radius-soft)] px-3 py-1.5 text-xs font-semibold transition"
+            :class="activeRegionTool === 'blackboard' ? 'bg-emerald-600 text-white' : 'bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600/20'"
+            @click="selectRegionTool('blackboard')"
+          >
+            框选黑板区
+          </button>
+          <button
+            type="button"
+            class="rounded-[var(--radius-soft)] bg-[rgba(var(--line-soft),0.08)] px-3 py-1.5 text-xs font-semibold text-[rgb(var(--text-subtle))] transition hover:bg-[rgba(var(--line-soft),0.12)]"
+            @click="clearVisionRegions"
+          >
+            清除框选
+          </button>
+          <label class="ml-auto flex items-center gap-2 text-xs font-semibold text-[rgb(var(--text-subtle))]">
+            <input v-model="visionEnabled" type="checkbox" class="h-4 w-4 rounded border-[rgba(var(--line-soft),0.18)]" />
+            视觉入库
+          </label>
+        </div>
+
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-[rgb(var(--text-faint))]">
+          <span>区域：{{ visionRegionSummary }}</span>
+          <span>/</span>
+          <span>{{ visionUploading ? '视觉帧解析中' : `已分析 ${visionFrameCount} 帧` }}</span>
+          <span>/</span>
+          <span>入库 {{ visionRecordCount }} 条</span>
+        </div>
+        <p v-if="activeRegionTool" class="mt-2 text-xs text-[rgb(var(--accent))]">
+          在视频画面上拖动鼠标框选{{ regionLabel(activeRegionTool) }}。
+        </p>
+        <p v-if="visionStatusMessage" class="mt-2 text-xs text-[rgb(var(--text-subtle))]">
+          {{ visionStatusMessage }}
+        </p>
+        <p v-if="visionError" class="mt-2 text-xs text-[rgb(var(--danger))]">
+          {{ visionError }}
+        </p>
+      </div>
+
       <div
         v-if="subtitles.length > 0"
         class="min-h-[120px] overflow-auto rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgba(var(--bg-muted),0.45)] p-2"
