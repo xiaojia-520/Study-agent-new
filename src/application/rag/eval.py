@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from src.core.knowledge.document_models import KnowledgeAnswer
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.session_rag_query_service import QueryScope, SessionRagQueryService
 
 

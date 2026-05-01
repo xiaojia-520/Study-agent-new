@@ -1,9 +1,14 @@
 import type {
   CreateSessionPayload,
+  LessonCopilotPayload,
+  LessonCopilotResponse,
+  GenerateLessonNotePayload,
+  GenerateLessonNoteResponse,
   LessonAssetListResponse,
   LessonAssetResponse,
   LessonHistoryResponse,
   LessonMessagesResponse,
+  LessonNoteResponse,
   QueryResponse,
   QuerySessionPayload,
   RefinedTranscriptResponse,
@@ -313,6 +318,66 @@ export function fetchLessonMessages(
       method: 'GET',
     },
     '获取历史问答失败',
+    baseUrl,
+  )
+}
+
+export function generateLessonNote(
+  courseId: string,
+  lessonId: string,
+  payload: GenerateLessonNotePayload = {},
+  baseUrl = defaultBackendBaseUrl,
+) {
+  return requestJson<GenerateLessonNoteResponse>(
+    `/lessons/${encodeURIComponent(courseId)}/${encodeURIComponent(lessonId)}/notes/generate`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    '生成课后笔记失败',
+    baseUrl,
+  )
+}
+
+export function fetchLatestLessonNote(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  return requestJson<LessonNoteResponse>(
+    `/lessons/${encodeURIComponent(courseId)}/${encodeURIComponent(lessonId)}/notes/latest`,
+    {
+      method: 'GET',
+    },
+    '获取课后笔记失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonNote(noteId: string, baseUrl = defaultBackendBaseUrl) {
+  return requestJson<LessonNoteResponse>(
+    `/lessons/notes/${encodeURIComponent(noteId)}`,
+    {
+      method: 'GET',
+    },
+    '获取课后笔记状态失败',
+    baseUrl,
+  )
+}
+
+export function runLessonCopilot(
+  courseId: string,
+  lessonId: string,
+  payload: LessonCopilotPayload,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  return requestJson<LessonCopilotResponse>(
+    `/lessons/${encodeURIComponent(courseId)}/${encodeURIComponent(lessonId)}/copilot`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    'Lesson copilot request failed',
     baseUrl,
   )
 }

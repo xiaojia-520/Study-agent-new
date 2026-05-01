@@ -15,7 +15,7 @@ function buildWelcomeMessage(): ChatMessage {
   return {
     id: `assistant-welcome-${Date.now()}`,
     role: 'assistant',
-    text: '已切换到真实后端。先录音拿到课堂内容，再在这里直接提问。',
+    text: '已切换到课堂问答。先录音拿到课堂内容，再在这里直接提问。',
     createdAt: Date.now(),
   }
 }
@@ -42,25 +42,7 @@ function buildAssistantAnswer(response: QueryResponse): string {
     return response.answer.trim()
   }
 
-  if (response.results.length > 0) {
-    const snippets = response.results
-      .slice(0, 3)
-      .map((item, index) => `${index + 1}. ${item.content}`)
-      .join('\n')
-
-    return ['当前未返回 LLM 综合回答，下面是检索到的关键片段：', snippets].join('\n\n')
-  }
-
-  return '当前没有检索到相关内容。可以换个问法，或者先录入更多课堂内容。'
-}
-
-function shouldRetryWithoutLlm(message: string): boolean {
-  const normalized = message.toLowerCase()
-  return (
-    normalized.includes('llm is not enabled') ||
-    normalized.includes('openai-compatible llm support') ||
-    normalized.includes('rag_llm_api_key')
-  )
+  return '当前未返回 LLM 答案，请检查后端 LLM 配置。'
 }
 
 export const useRagChatStore = defineStore('ragChat', () => {
@@ -71,6 +53,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
   const errorMessage = ref('')
   const queryScope = ref<QueryScope>('auto')
   const topK = ref(5)
+  const includeRagContext = ref(false)
   const lastResponse = ref<QueryResponse | null>(null)
 
   function resetForSession(): void {
@@ -78,11 +61,12 @@ export const useRagChatStore = defineStore('ragChat', () => {
     currentQuestion.value = ''
     sending.value = false
     errorMessage.value = ''
+    includeRagContext.value = false
     lastResponse.value = null
     chatMessages.value = [buildWelcomeMessage()]
   }
 
-  async function runQuery(question: string, withLlm: boolean): Promise<QueryResponse> {
+  async function runQuery(question: string): Promise<QueryResponse> {
     const sessionStore = useSessionStore()
     const sessionId = sessionStore.currentSessionId
 
@@ -96,7 +80,8 @@ export const useRagChatStore = defineStore('ragChat', () => {
         query: question,
         scope: queryScope.value,
         top_k: topK.value,
-        with_llm: withLlm,
+        with_llm: true,
+        include_rag_context: includeRagContext.value,
       },
       sessionStore.backendBaseUrl,
     )
@@ -133,17 +118,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
     errorMessage.value = ''
 
     try {
-      let response: QueryResponse
-
-      try {
-        response = await runQuery(question, true)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '查询课堂内容失败。'
-        if (!shouldRetryWithoutLlm(message)) {
-          throw error
-        }
-        response = await runQuery(question, false)
-      }
+      const response = await runQuery(question)
 
       lastResponse.value = response
       retrievalResults.value = response.results.map(mapQueryResultToRetrieval)
@@ -173,6 +148,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
     chatMessages,
     currentQuestion,
     errorMessage,
+    includeRagContext,
     lastResponse,
     queryScope,
     resetForSession,

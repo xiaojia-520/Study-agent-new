@@ -12,7 +12,8 @@ from typing import Any, Mapping, Protocol
 from PIL import Image
 
 from config.settings import settings
-from web.backend.app.domain.session import RealtimeSession
+from src.application.rag.ingestion_service import KnowledgeIngestionService
+from src.domain.session import RealtimeSession
 from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
 from web.backend.app.services.transcript_service import transcript_service
 
@@ -53,11 +54,14 @@ class SessionVisionService:
         vlm_extractor: RegionTextExtractor | None = None,
         transcript_writer=transcript_service,
         rag_indexer=realtime_rag_indexer,
+        ingestion_service: KnowledgeIngestionService | None = None,
     ) -> None:
         self.ocr_extractor = ocr_extractor or LocalPaddleOcrExtractor()
         self.vlm_extractor = vlm_extractor or LocalQwenVlExtractor()
-        self.transcript_writer = transcript_writer
-        self.rag_indexer = rag_indexer
+        self.ingestion_service = ingestion_service or KnowledgeIngestionService(
+            transcript_writer=transcript_writer,
+            realtime_indexer=rag_indexer,
+        )
         self._last_hash_by_region: dict[tuple[str, str], str] = {}
         self._lock = threading.RLock()
         self._processing_lock = threading.Lock()
@@ -100,7 +104,7 @@ class SessionVisionService:
             image = Image.open(BytesIO(image_bytes)).convert("RGB")
             results: list[VisionRegionResult] = []
             records: list[dict[str, Any]] = []
-            next_chunk_id = self.transcript_writer.next_chunk_id(session.session_id)
+            next_chunk_id = self.ingestion_service.next_chunk_id(session.session_id)
 
             for region_name in ("ppt", "blackboard"):
                 if region_name not in regions:
@@ -134,8 +138,7 @@ class SessionVisionService:
                     captured_at_ms=captured_at_ms,
                     image_size=image.size,
                 )
-                    record_id = self.transcript_writer.append_transcript_record(record)
-                    self.rag_indexer.append_record(session, record)
+                    record_id = self.ingestion_service.persist_and_enqueue_realtime_record(session, record)
                     self._remember_hash(session.session_id, region_name, text_hash)
 
                     result.status = "indexed"
@@ -219,9 +222,7 @@ class SessionVisionService:
             self._last_hash_by_region[(session_id, region_name)] = text_hash
 
     def _flush_rag_session(self, session_id: str) -> None:
-        flush_session = getattr(self.rag_indexer, "flush_session", None)
-        if callable(flush_session):
-            flush_session(session_id)
+        self.ingestion_service.flush_session(session_id)
 
 
 class LocalPaddleOcrExtractor:

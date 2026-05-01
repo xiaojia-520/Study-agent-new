@@ -1,107 +1,283 @@
 # Study Agent
 
-Study Agent 是一个面向课堂学习场景的实时语音学习助手。系统支持课堂语音实时转写、按课程和课次保存学习记录、基于课堂内容进行 RAG 检索问答，并提供历史回顾、转写精修、课堂总结和习题生成等能力。
+Study Agent 是一个面向课堂学习场景的本地优先学习系统。它把实时语音转写、课件解析、视频字幕、课堂问答、课后笔记和复习 copilot 串成了一条完整链路。
 
-项目当前主要面向本地部署和演示场景，适合用于课堂录音转写、课程复习、知识追问和学习资料沉淀。
+从当前实现看，它已经不只是一个“语音转写 Demo”，而是一套围绕 `course_id + lesson_id + session_id` 运转的课堂知识沉淀平台：
 
-## 功能概览
+- 上课中：实时语音转写、视觉截帧 OCR/VLM、课堂内问答
+- 课后：历史回看、视频字幕、精修转写、总结、测验、笔记
+- 学习工作台：Lesson Copilot 调用已有工具做复习编排
 
-- 实时语音转写：浏览器采集麦克风音频，通过 WebSocket 发送到后端，由 FunASR / Paraformer 完成中文语音识别。
-- 课堂会话管理：每次录音自动创建 session，并绑定 course_id、lesson_id、subject 等上下文信息。
-- 转写持久化：实时转写结果同时写入 SQLite 和 JSONL，方便前端查询、后续索引和离线处理。
-- 实时 RAG 入库：最终转写片段会缓冲写入 Qdrant 向量库，支持准实时课堂内容检索。
-- 课堂问答：前端可对当前课程或历史课程提问，后端按课程、课次、历史范围或全局范围进行检索。
-- 带引用回答：开启 LLM 后，可基于检索片段生成带上下文依据的回答。
-- 多模态课堂素材解析：支持上传 PDF、PPT、Word、HTML 和图片，经 MinerU 精准解析后抽取 Markdown/结构化文本并写入 RAG。
-- 课件与转写联合检索：课件页、图片解析文本和实时语音转写会带 source_type、文件名、页码等元数据进入同一个 Qdrant 知识库。
-- 历史回顾：支持查看历史课程、历史问答、原始转写和 LLM 精修后的转写。
-- 学习生成：支持基于课堂转写生成课程总结、复习要点、重要概念和测验题。
-- 本地优先：Embedding 模型、Qdrant 存储、ASR 模型均支持本地运行，便于离线演示和数据留存。
+## 1. 当前能力
 
-## 技术栈
+### 1.1 实时课堂
 
-后端：
+- 浏览器采集麦克风音频，通过 WebSocket 发送到后端
+- 后端使用实时 ASR 管线处理音频
+- 转写结果写入：
+  - SQLite `transcript_records`
+  - 本地 JSONL 转写文件
+  - Qdrant 向量库（实时或准实时）
+- 前端可围绕当前课堂做 RAG 查询
+
+### 1.2 课堂视觉能力
+
+- 支持在视频画面上框选区域
+- `ppt` 区域走 PaddleOCR
+- `blackboard` 区域走 Qwen2.5-VL
+- 视觉结果会写入统一 transcript 体系，再进入 RAG
+
+### 1.3 视频处理与回放
+
+- 前端可录制课堂视频并上传
+- 后端将视频抽音频并调用 FunASR 生成字幕
+- 字幕段落写入：
+  - `lesson_videos`
+  - `transcript_records`
+  - Qdrant
+- 历史页支持视频回放、字幕展示、字幕跳转
+
+### 1.4 课件与资料解析
+
+- 支持上传 PDF、PPT、Word、HTML、图片等课堂资料
+- 后端通过 MinerU 解析文本、页面结构、公式和表格
+- 解析结果写入统一 transcript / RAG 体系
+
+### 1.5 课后复习能力
+
+- 历史课堂浏览
+- 原始转写与精修转写
+- 课后总结
+- 测验题生成
+- 课节级笔记 `lesson_notes`
+- Markdown 导出
+
+### 1.6 Lesson Copilot
+
+当前已经有一个最小可用的 lesson copilot，入口在 `/workshop`。
+
+它是一个窄域 agent，不负责整个系统调度，只围绕一节课做学习编排。当前可调用的工具包括：
+
+- `get_lesson_note`
+- `generate_lesson_note`
+- `get_lesson_transcripts`
+- `get_refined_lesson_transcripts`
+- `get_lesson_videos`
+- `get_session_assets`
+- `get_lesson_messages`
+- `generate_lesson_quiz`
+- `generate_lesson_summary`
+- `query_lesson_knowledge`
+
+## 2. 系统页面
+
+前端路由：
+
+- `/`：实时课堂页 `LiveView`
+- `/history`：历史回顾页 `History`
+- `/workshop`：学习资料库 / 课后工作台 `StudyLibView`
+
+推荐理解方式：
+
+- `LiveView`：上课中
+- `History`：回看和追溯
+- `StudyLibView`：课后复习、笔记、copilot
+
+## 3. 核心业务流
+
+### 3.1 实时语音转写流
+
+```text
+浏览器麦克风
+-> WebSocket /ws/audio/{session_id}
+-> realtime_speech_service
+-> transcript_records + JSONL
+-> realtime_rag_indexer
+-> 前端实时展示 / 课堂问答
+```
+
+### 3.2 视频字幕流
+
+```text
+浏览器录制视频
+-> POST /sessions/{session_id}/videos
+-> session_video_service
+-> ffmpeg 抽音频
+-> FunASR 离线转写
+-> lesson_videos + transcript_records
+-> rebuild_session_index
+-> 历史页回放
+```
+
+### 3.3 视觉 OCR/VLM 流
+
+```text
+视频帧截图
+-> POST /sessions/{session_id}/vision-frame
+-> session_vision_service
+-> OCR / VLM
+-> transcript_records
+-> RAG
+```
+
+### 3.4 课件资料流
+
+```text
+上传 PDF/PPT/HTML/图片
+-> POST /sessions/{session_id}/assets
+-> lesson_asset_service
+-> MinerU 解析
+-> transcript_records
+-> RAG
+```
+
+### 3.5 课后笔记流
+
+```text
+POST /lessons/{course_id}/{lesson_id}/notes/generate
+-> LessonNoteService
+-> 聚合 lesson transcript_records
+-> LLM 分块生成结构化笔记
+-> lesson_notes 持久化
+-> StudyLibView 展示 / 导出 Markdown
+```
+
+### 3.6 Copilot 流
+
+```text
+用户消息
+-> POST /lessons/{course_id}/{lesson_id}/copilot
+-> LessonCopilotService
+-> LLM 决策调用工具
+-> 工具结果回填
+-> 最终回答 + steps
+```
+
+## 4. 技术栈
+
+### 后端
 
 - Python 3.10+
 - FastAPI
 - WebSocket
-- FunASR / Paraformer
-- Silero VAD
-- LlamaIndex
-- Qdrant
-- SentenceTransformers
 - SQLite
-- MinerU API（用于课件、文档和图片解析）
+- Qdrant
+- LlamaIndex
+- OpenAI-compatible LLM API
 
-前端：
+### 模型与 AI 能力
+
+- 实时 / 离线 ASR：FunASR / Paraformer
+- VAD：FSMN VAD / Silero VAD
+- 标点：CT-Transformer
+- Embedding：`BAAI/bge-small-zh-v1.5`
+- OCR：PaddleOCR
+- VLM：`Qwen/Qwen2.5-VL-7B-Instruct`
+- 目标检测：YOLO11
+- 文档解析：MinerU
+
+### 前端
 
 - Vue 3
 - TypeScript
 - Vite
 - Pinia
+- Vue Router
 - Tailwind CSS
 
-数据与模型：
-
-- 语音识别模型：FunASR Paraformer 中文模型
-- VAD 模型：FSMN VAD / Silero VAD
-- 标点模型：CT-Transformer punctuation
-- Embedding 模型：BAAI/bge-small-zh-v1.5
-- LLM：OpenAI 兼容接口，默认可配置 DeepSeek
-- 文档解析：MinerU 精准解析 API，可配置 `pipeline` / `vlm` 模式
-
-## 项目结构
+## 5. 项目结构
 
 ```text
 .
-├── config/                         # 全局配置和 Prompt
-│   ├── settings.py                  # 路径、模型、RAG、LLM 等配置
-│   └── prompts.py                   # RAG、总结、测验、转写精修 Prompt
-├── scripts/                         # RAG 构建、查询、评测、模型下载脚本
-├── src/
-│   ├── application/                 # RAG 服务、语音流水线、离线转写
-│   ├── core/                        # ASR、音频、知识库等核心逻辑
-│   └── infrastructure/              # 模型加载、日志、存储适配
-├── tests/                           # 后端单元测试和 RAG 测试夹具
-├── web/
-│   ├── backend/                     # FastAPI 后端入口和业务接口
-│   └── frontend/                    # Vue 前端项目
-├── models/                          # 本地模型目录，需通过脚本下载
-├── data/                            # SQLite、转写、素材、MinerU 结果、Qdrant 本地数据
-├── requirements-rag.txt             # Python 依赖
-├── setup_model.bat                  # Windows 模型下载脚本
-└── README_RAG.md                    # RAG 子模块说明
+├─ config/
+│  ├─ settings.py                 # 全局配置
+│  └─ prompts.py                  # 笔记 / quiz / summary / RAG / copilot prompt
+├─ data/                          # 运行时数据
+├─ models/                        # 本地模型目录
+├─ scripts/                       # 模型下载、RAG 脚本、copilot 运行脚本
+├─ src/
+│  ├─ application/                # 业务用例层
+│  │  ├─ lesson_copilot/
+│  │  ├─ lesson_notes/
+│  │  ├─ rag/
+│  │  ├─ runtime/
+│  │  ├─ speech/
+│  │  └─ video/
+│  ├─ core/                       # 模型 / 音频 / 知识库核心能力
+│  ├─ domain/                     # 领域对象
+│  └─ infrastructure/             # 存储、日志、模型加载
+├─ tests/
+└─ web/
+   ├─ backend/
+   │  ├─ app/api/                 # FastAPI 路由
+   │  └─ app/services/            # Web 侧服务编排
+   └─ frontend/
+      └─ src/
 ```
 
-## 环境要求
+## 6. 数据存储
 
-基础环境：
+### 6.1 SQLite
 
-- Windows 10/11、macOS 或 Linux
+默认数据库：
+
+```text
+data/study_agent.sqlite3
+```
+
+当前关键表：
+
+- `chat_messages`
+- `transcript_records`
+- `lesson_assets`
+- `lesson_videos`
+- `refined_transcript_records`
+- `lesson_notes`
+
+### 6.2 本地文件目录
+
+```text
+data/transcripts/       # JSONL 转写
+data/assets/            # 原始资料文件
+data/videos/            # 上传视频
+data/video_subtitles/   # wav / srt
+data/mineru_results/    # MinerU 解析结果
+data/qdrant/            # 本地 Qdrant 数据
+logs/                   # 日志
+```
+
+### 6.3 向量库
+
+- 默认使用 Qdrant
+- 支持本地 Qdrant 目录
+- 主要索引内容来自统一 transcript 记录，而不是直接索引原始二进制文件
+
+## 7. 环境要求
+
+基础要求：
+
 - Python 3.10+
-- Node.js 20.19+ 或 22.12+
+- Node.js `^20.19.0 || >=22.12.0`
 - npm
 - Git
 
-建议环境：
+建议机器配置：
 
-- 内存 16GB 以上
-- 有独立显卡更好，但不是必须
-- 浏览器使用 Chrome / Edge
-- 本地演示时建议使用稳定网络，用于首次下载模型和调用 LLM API
+- 16GB+ 内存
+- Windows 10/11、macOS 或 Linux
+- 有独显更好，但不是必须
 
-可选依赖：
+额外说明：
 
-- FFmpeg：用于部分音视频文件处理场景
-- CUDA 版本 PyTorch：如果需要 GPU 加速，可按机器环境单独安装对应版本
+- 视频转字幕依赖 FFmpeg
+- 首次运行会加载本地模型，冷启动较慢是正常现象
+- OCR / VLM / Embedding 模型占用较大，Windows 机器建议保证足够页面文件
 
-## 快速开始
+## 8. 安装与初始化
 
-以下命令默认在项目根目录执行。
+以下命令默认在仓库根目录执行。
 
-### 1. 创建 Python 虚拟环境
-
-PowerShell：
+### 8.1 创建虚拟环境
 
 ```powershell
 python -m venv .venv
@@ -109,59 +285,61 @@ python -m venv .venv
 python -m pip install -U pip
 ```
 
-如果 PowerShell 不允许激活脚本，可先执行：
+如果 PowerShell 阻止脚本执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 ```
 
-### 2. 安装 Python 依赖
+### 8.2 安装 Python 依赖
 
 ```powershell
 python -m pip install -r requirements-rag.txt
 python -m pip install huggingface_hub modelscope pytest
 ```
 
-`requirements-rag.txt` 包含后端运行所需的主要依赖；`huggingface_hub` 和 `modelscope` 用于下载本地模型；`pytest` 用于运行测试。
+### 8.3 下载本地模型
 
-### 3. 下载本地模型
-
-Windows 可以直接执行：
+Windows：
 
 ```powershell
 .\setup_model.bat
 ```
 
-或者手动执行：
+或直接运行：
 
 ```powershell
 python scripts/setup_models.py
 ```
 
-脚本会下载并放置以下模型：
+脚本会准备这些模型：
 
-- `models/embedding/bge-small-zh-v1.5`
-- `models/asr/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch`
-- `models/vad/speech_fsmn_vad_zh-cn-16k-common-pytorch`
-- `models/punc/punc_ct-transformer_cn-en-common-vocab471067-large`
+- Embedding：`models/embedding/bge-small-zh-v1.5`
+- ASR：`speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch`
+- VAD：`speech_fsmn_vad_zh-cn-16k-common-pytorch`
+- Punctuation：`punc_ct-transformer_cn-en-common-vocab471067-large`
+- YOLO：`yolo11s.pt`
+- PaddleOCR det / rec
+- Qwen2.5-VL-7B-Instruct
 
-如果需要使用前端里的 `paraformer-zh-streaming` 或 `paraformer-zh-streaming-2pass` 模式，还需要准备在线模型：
+注意：
+
+- 前端里也有 streaming 模型选项，若你要用在线流式 Paraformer，需要额外准备：
+  `models/asr/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online`
+
+## 9. 配置
+
+项目默认读取：
 
 ```text
-models/asr/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online
+config/.env
 ```
 
-可从 ModelScope 下载 `damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online` 到该目录。
-
-### 4. 配置环境变量
-
-项目默认读取 `config/.env`，也可以直接使用系统环境变量覆盖配置。
-
-建议新建或修改 `config/.env`：
+建议最少配置以下变量：
 
 ```env
-# RAG / Qdrant
+# Qdrant / RAG
 RAG_QDRANT_PREFER_LOCAL=true
 RAG_QDRANT_COLLECTION=speech_transcript_chunks
 RAG_REALTIME_INDEXING_ENABLED=true
@@ -169,18 +347,17 @@ RAG_REALTIME_FLUSH_RECORDS=3
 RAG_REALTIME_FLUSH_CHARS=300
 RAG_REALTIME_FLUSH_INTERVAL_SECONDS=20
 
-# LLM，可选。不开启时仍可使用检索结果，但不会生成综合回答。
+# LLM（建议用于笔记、测验、summary、copilot）
 RAG_ENABLE_LLM=true
 RAG_LLM_PROVIDER=deepseek
 RAG_LLM_MODEL=deepseek-chat
-RAG_LLM_API_KEY=你的_API_KEY
+RAG_LLM_API_KEY=your_api_key
 RAG_LLM_API_BASE=https://api.deepseek.com
 RAG_LLM_TEMPERATURE=0.1
 RAG_LLM_MAX_TOKENS=512
 
-# MinerU，多模态课堂素材解析，可选。
-# 不配置时实时语音、转写和普通 RAG 仍可使用，但无法上传课件解析。
-MINERU_API_TOKEN=你的_MINERU_API_TOKEN
+# MinerU（资料解析）
+MINERU_API_TOKEN=your_mineru_token
 MINERU_MODEL_VERSION=vlm
 MINERU_LANGUAGE=ch
 MINERU_ENABLE_FORMULA=true
@@ -189,30 +366,24 @@ MINERU_IS_OCR=false
 MINERU_AUTO_INDEX_ENABLED=true
 ```
 
-注意：
+补充说明：
 
-- 不要把真实 API Key 提交到 Git 仓库。
-- 如果只是演示检索能力，可以设置 `RAG_ENABLE_LLM=false`。
-- 使用 OpenAI 兼容服务时，保持 `RAG_LLM_PROVIDER=openai` 或 `deepseek`，并配置对应的 `RAG_LLM_API_BASE`。
-- `MINERU_MODEL_VERSION=vlm` 更适合包含图表、公式和复杂版式的课件；如需更轻量的解析可按 MinerU 官方文档切换为其他模型。
-- 上传 `.html` 文件时，后端会自动使用 MinerU HTML 解析模式。
-- MinerU API Key 属于敏感凭据，不要写入代码或提交到仓库。
+- 不需要 LLM 时，可设 `RAG_ENABLE_LLM=false`
+- 不配置 MinerU 时，实时课堂和普通 RAG 仍可运行，但资料解析功能不可用
+- `config/settings.py` 是当前所有默认路径和运行参数的最终来源
 
-## 本地开发部署
+## 10. 启动方式
 
-### 1. 启动后端
-
-在项目根目录执行：
+### 10.1 启动后端
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
 python -m uvicorn web.backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-启动成功后访问：
+健康检查：
 
 ```text
-http://127.0.0.1:8000/
+GET http://127.0.0.1:8000/
 ```
 
 正常返回：
@@ -221,11 +392,7 @@ http://127.0.0.1:8000/
 {"status":"ok"}
 ```
 
-后端启动时会初始化 SQLite，并加载 ASR 模型。首次加载模型可能较慢。
-
-### 2. 启动前端
-
-打开新的 PowerShell 窗口：
+### 10.2 启动前端
 
 ```powershell
 cd web\frontend
@@ -233,344 +400,246 @@ npm install
 npm run dev
 ```
 
-默认访问：
+默认前端地址通常是：
 
 ```text
-http://127.0.0.1:5173/
+http://127.0.0.1:5173
 ```
 
-如果后端地址不是 `http://127.0.0.1:8000`，可在 `web/frontend/.env.local` 中配置：
+如果端口被占用，Vite 会自动切到别的端口。
+
+如需指定后端地址，可在 `web/frontend/.env.local` 中配置：
 
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-### 3. 使用流程
+## 11. 使用方式
 
-1. 打开前端首页。
-2. 允许浏览器使用麦克风。
-3. 输入课程名称。
-4. 选择 ASR 模型。
-5. 点击“开始录音”。
-6. 说话后查看实时转写结果。
-7. 如需结合课件问答，可在“课堂素材”区域上传 PDF、PPT、Word、HTML 或图片。
-8. 前端会显示素材状态，后端会提交 MinerU 解析、下载解析结果，并将解析出的文本按页写入 RAG。
-9. 在问答区域输入问题，系统会基于当前课程转写和已入库课堂素材进行检索和回答。
-10. 停止录音后，可进入“历史回顾”查看课程记录、历史问答和转写精修结果。
+### 11.1 实时课堂
 
-### 4. 多模态素材入库流程
+1. 打开 `/`
+2. 创建或进入课堂
+3. 允许浏览器麦克风权限
+4. 开始录音
+5. 查看实时转写
+6. 在课堂问答区提问
 
-上传课堂素材后，后端处理流程如下：
+### 11.2 上传资料
 
-1. 将原文件保存到 `data/assets/{session_id}/`。
-2. 在 SQLite 的 `lesson_assets` 表中记录素材状态、文件名、大小、MinerU batch_id、解析结果路径等信息。
-3. 调用 MinerU 精准解析 API 申请上传 URL，并将文件上传到 MinerU。
-4. 轮询 MinerU 解析状态，完成后下载结果 zip 到 `data/mineru_results/{asset_id}/`。
-5. 优先读取 `*_content_list_v2.json` 或 `*_content_list.json`，没有结构化结果时回退读取 `full.md`。
-6. 将解析文本按页或 Markdown 段落写入 `transcript_records`，并设置：
-   - `source_type=document` / `slide` / `image`
-   - `source_file=原文件名`
-   - `metadata.asset_id`
-   - `metadata.asset_file_name`
-   - `metadata.page_no`
-   - `metadata.mineru_batch_id`
-7. 调用现有 RAG indexing service 写入 Qdrant，与实时语音转写共享同一个检索库。
+1. 在课堂中上传 PDF / PPT / Word / HTML / 图片
+2. 等待 MinerU 解析完成
+3. 再在问答区或历史页使用这些内容
 
-因此，RAG 中保存的不是原始二进制文件，而是 MinerU 解析后的文本块和元数据。原始文件和 MinerU 输出文件会保存在本地运行目录中，便于后续做引用预览或重新索引。
+### 11.3 上传视频
 
-## 生产或演示部署
+1. 在课堂中录制视频
+2. 停止录制后上传
+3. 后端离线抽字幕
+4. 到历史页回放
 
-当前项目没有内置 Dockerfile，推荐使用“后端服务 + 前端静态构建”的方式部署。
+### 11.4 课后复习
 
-### 方案一：单机演示部署
+1. 打开 `/history`
+2. 查看历史课节
+3. 看原始转写 / 精修转写 / 视频
 
-适用于比赛、答辩、本地机房演示。
+### 11.5 笔记与 Copilot
 
-1. 在演示机器上安装 Python、Node.js 和依赖。
-2. 预先执行 `setup_model.bat` 下载模型。
-3. 预先配置 `config/.env`。
-4. 后端使用固定端口启动：
+1. 打开 `/workshop`
+2. 左侧选择课节
+3. 生成课后笔记或重新生成
+4. 导出 Markdown
+5. 在 `Lesson Copilot` 面板里直接提复习请求
 
-```powershell
-python -m uvicorn web.backend.main:app --host 0.0.0.0 --port 8000
-```
+## 12. 主要 API
 
-5. 前端开发模式启动：
-
-```powershell
-cd web\frontend
-npm run dev -- --host 0.0.0.0
-```
-
-6. 浏览器访问前端地址，并确保前端 `VITE_API_BASE_URL` 指向后端地址。
-
-这种方式最适合现场演示，调试方便，但不适合作为长期线上服务。
-
-### 方案二：前端静态构建 + 后端 API
-
-构建前端：
-
-```powershell
-cd web\frontend
-npm install
-npm run build
-```
-
-构建产物位于：
-
-```text
-web/frontend/dist
-```
-
-部署方式：
-
-- 后端：使用 `uvicorn`、`gunicorn + uvicorn worker` 或进程管理工具常驻运行。
-- 前端：将 `web/frontend/dist` 放到 Nginx、Apache、Caddy 或其他静态文件服务器。
-- API：通过 `VITE_API_BASE_URL` 指向后端服务地址。
-- WebSocket：反向代理时需要开启 WebSocket 转发。
-
-Nginx 反向代理时需要保留 WebSocket 升级头，示例：
-
-```nginx
-location /ws/ {
-    proxy_pass http://127.0.0.1:8000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-}
-
-location /sessions {
-    proxy_pass http://127.0.0.1:8000;
-    proxy_set_header Host $host;
-}
-```
-
-## 后端接口说明
-
-主要 HTTP 接口：
-
-```text
-GET  /                         健康检查
-POST /sessions                 创建课堂会话
-GET  /sessions                 查看当前后端内存中的会话
-GET  /sessions/history         查看历史课程列表
-GET  /sessions/history/messages
-GET  /sessions/history/transcripts
-GET  /sessions/history/refined-transcripts
-GET  /sessions/{session_id}/transcripts
-GET  /sessions/{session_id}/messages
-POST /sessions/{session_id}/assets
-GET  /sessions/{session_id}/assets
-GET  /sessions/assets/{asset_id}
-POST /sessions/{session_id}/query
-POST /sessions/{session_id}/summary
-POST /sessions/{session_id}/quiz
-```
-
-实时音频 WebSocket：
+### 12.1 WebSocket
 
 ```text
 ws://127.0.0.1:8000/ws/audio/{session_id}
 ```
 
-前端会自动创建 session 并连接 WebSocket，一般不需要手动调用。
+### 12.2 Session / History
 
-素材上传接口使用 `multipart/form-data`：
+```text
+POST /sessions
+GET  /sessions
+GET  /sessions/history
+GET  /sessions/history/messages
+GET  /sessions/history/transcripts
+GET  /sessions/history/refined-transcripts
+GET  /sessions/history/videos
+GET  /sessions/{session_id}/transcripts
+GET  /sessions/{session_id}/messages
+```
+
+### 12.3 资料 / 视频 / 视觉
 
 ```text
 POST /sessions/{session_id}/assets
-form field: file
+GET  /sessions/{session_id}/assets
+GET  /sessions/assets/{asset_id}
+
+POST /sessions/{session_id}/videos
+GET  /sessions/{session_id}/videos
+GET  /sessions/videos/{video_id}
+GET  /sessions/videos/{video_id}/file
+GET  /sessions/videos/{video_id}/srt
+
+POST /sessions/{session_id}/vision-frame
 ```
 
-支持的文件类型：
+### 12.4 问答 / 总结 / 测验
 
 ```text
-.pdf .doc .docx .ppt .pptx .png .jpg .jpeg .jp2 .webp .gif .bmp .html
+POST /sessions/{session_id}/query
+POST /sessions/{session_id}/summary
+POST /sessions/{session_id}/quiz
 ```
 
-上传成功后接口会立即返回素材记录，解析和入库在后台继续执行。前端会轮询 `GET /sessions/assets/{asset_id}` 获取状态。
+### 12.5 Lesson Notes / Copilot
 
-## RAG 脚本
-
-构建索引：
-
-```powershell
-python scripts/rag_build_index.py --path data/transcripts/demo_session_for_check.jsonl --recreate
+```text
+GET  /lessons/notes/{note_id}
+GET  /lessons/{course_id}/{lesson_id}/notes/latest
+POST /lessons/{course_id}/{lesson_id}/notes/generate
+POST /lessons/{course_id}/{lesson_id}/copilot
 ```
 
-检索查询：
+## 13. 脚本
 
-```powershell
-python scripts/rag_query.py "这节课讲了什么？" --reindex-path data/transcripts/demo_session_for_check.jsonl --recreate
+```text
+scripts/setup_models.py           # 下载本地模型
+scripts/rag_build_index.py        # 构建 RAG 索引
+scripts/rag_query.py              # 命令行查询 RAG
+scripts/rag_eval.py               # 评测 RAG
+scripts/video_to_srt.py           # 视频转字幕
+scripts/run_lesson_copilot.py     # 命令行运行 lesson copilot
 ```
 
-启用 LLM 回答：
+## 14. 测试与检查
 
-```powershell
-python scripts/rag_query.py "这节课讲了什么？" --with-llm
-```
-
-运行 RAG 评测：
-
-```powershell
-python scripts/rag_eval.py `
-  --cases tests/fixtures/rag_eval_demo_cases.jsonl `
-  --reindex-path tests/fixtures/rag_eval_demo_transcript.jsonl `
-  --recreate
-```
-
-更多 RAG 细节可参考 `README_RAG.md`。
-
-## 测试
-
-安装测试依赖后，在项目根目录执行：
+### 后端测试
 
 ```powershell
 python -m pytest -q
 ```
 
-前端类型检查和构建：
+### 前端类型检查
+
+```powershell
+cd web\frontend
+npm run type-check
+```
+
+### 前端构建
 
 ```powershell
 cd web\frontend
 npm run build
 ```
 
-常用验证顺序：
+推荐检查顺序：
 
-1. `python -m compileall -q config src web\backend`
+1. `python -m py_compile config/settings.py web/backend/main.py`
 2. `python -m pytest -q`
-3. `cd web\frontend`
-4. `npm run build`
-5. 启动后端并访问 `/`
-6. 启动前端并完成一次录音、提问、历史回顾流程
+3. `cd web/frontend && npm run type-check`
+4. 启动前后端手工走一遍：
+   - 实时录音
+   - 上传课件
+   - 上传视频
+   - 生成笔记
+   - Ask Copilot
 
-如果只验证 MinerU 素材解析链路，可先运行：
+## 15. 常见问题
 
-```powershell
-python -m pytest tests/test_lesson_asset_service.py -q
-```
+### 15.1 后端启动很慢
 
-## 数据存储
+原因通常是：
 
-默认数据位置：
+- 首次加载 ASR / FunASR
+- 首次加载 embedding / OCR / VLM
+- 本地磁盘或内存不足
 
-```text
-data/study_agent.sqlite3              # SQLite 数据库
-data/transcripts/                     # 转写 JSONL 文件
-data/assets/                          # 上传的课堂素材原文件
-data/mineru_results/                  # MinerU 解析结果 zip、Markdown 和 JSON
-data/qdrant/                          # Qdrant 本地向量库
-logs/                                 # 日志
-```
+建议演示前提前启动一次。
 
-这些目录属于运行时数据，通常不建议提交到 Git。
-
-## 常见问题
-
-### 1. 后端启动很慢
-
-首次启动会加载 ASR、VAD、标点和 Embedding 模型，时间较长是正常现象。演示前建议提前启动并预热。
-
-### 2. 提示模型路径不存在
-
-先执行：
-
-```powershell
-.\setup_model.bat
-```
-
-并确认 `models/` 下对应模型目录存在且不为空。
-
-### 3. 前端提示无法连接后端
-
-检查：
-
-- 后端是否启动在 `127.0.0.1:8000`
-- `web/frontend/.env.local` 中的 `VITE_API_BASE_URL` 是否正确
-- 浏览器控制台是否有 CORS、WebSocket 或网络错误
-
-### 4. 浏览器无法录音
-
-检查：
-
-- 浏览器是否允许麦克风权限
-- 页面是否通过 `localhost`、`127.0.0.1` 或 HTTPS 访问
-- 系统麦克风是否被其他软件占用
-
-### 5. LLM 回答不可用
+### 15.2 LLM 调用失败
 
 检查：
 
 - `RAG_ENABLE_LLM=true`
-- `RAG_LLM_API_KEY` 已配置
-- `RAG_LLM_API_BASE` 可访问
-- API Key 余额和权限正常
+- `RAG_LLM_API_KEY` 是否配置
+- `RAG_LLM_API_BASE` 是否正确
+- 供应商余额是否足够
 
-如果不需要综合回答，可关闭 LLM，仅展示检索片段：
+### 15.3 Windows 出现 SciPy / transformers / 页面文件错误
 
-```env
-RAG_ENABLE_LLM=false
+如果出现类似：
+
+```text
+DLL load failed
+页面文件太小，无法完成操作
 ```
 
-### 6. RAG 检索不到内容
+通常是：
 
-可能原因：
+- 页面文件太小
+- 内存压力过高
+- 一次性导入了过重依赖
 
-- 当前课程转写内容太少
-- 实时索引还未 flush 到 Qdrant
-- Qdrant 本地数据目录被清空
-- 查询范围选错，例如只查当前课次但问题属于历史课次
+建议增大页面文件，并避免同时启动过多重模型任务。
 
-可停止录音后再查询，或使用 RAG 脚本手动重建索引。
-
-### 7. 课堂素材上传后一直解析失败
+### 15.4 资料上传后无法检索
 
 检查：
 
-- `MINERU_API_TOKEN` 是否已配置且有效
-- 网络是否能访问 `https://mineru.net`
-- 文件大小是否超过 MinerU 精准解析限制
-- 文件格式是否在支持列表中
-- `data/assets/` 和 `data/mineru_results/` 是否有写入权限
-
-### 8. 课件解析成功但问答搜不到
-
-检查：
-
-- 素材状态是否为 `done`
-- `lesson_assets.record_count` 是否大于 0
+- `MINERU_API_TOKEN` 是否有效
 - `MINERU_AUTO_INDEX_ENABLED=true`
-- Qdrant 本地目录是否可写
-- 问答范围是否选择当前课次或包含该课次的课程范围
+- 资料状态是否已到 `done`
+- `lesson_assets.record_count` 是否大于 0
 
-课件内容会作为 `source_type=document`、`slide` 或 `image` 的文本记录进入 `transcript_records`，可先通过 `/sessions/{session_id}/transcripts` 查看是否已经写入。
+### 15.5 视频有回放但没有字幕
 
-## 参赛演示建议
+检查：
 
-如果用于比赛或答辩，建议提前准备：
+- FFmpeg 是否可用
+- FunASR 模型是否完整
+- `lesson_videos.status` 是否为 `done`
 
-- 一段 3 到 5 分钟的真实课堂语音演示流程
-- 一份小型 PDF/PPT/图片课件，用于展示 MinerU 多模态素材解析和入库
-- 一份已有历史课程数据，用于展示历史回顾和跨课次追问
-- 几个固定问题，用于展示当前课次问答、历史课次问答、总结和测验生成
-- 本地模型、Node 依赖、Python 依赖全部预安装
-- LLM 和 MinerU API Key 不写入代码仓库，演示机器单独配置
+## 16. 当前定位
 
-推荐演示顺序：
+从架构上看，这个项目当前更接近：
 
-1. 创建课堂并开始录音。
-2. 展示实时转写。
-3. 上传课件或图片，展示素材状态从上传、解析到入库。
-4. 提问“课件里这个公式/图表和刚才老师讲的内容有什么关系？”展示转写和课件联合 RAG。
-5. 提问“刚才讲了哪些重点？”展示 RAG 检索和回答。
-6. 停止录音，展示历史记录沉淀。
-7. 展示历史课程追问、转写精修、总结或测验生成。
+```text
+实时课堂系统 + 课后复习平台 + lesson copilot
+```
 
-## 安全注意
+而不是单纯的通用 agent 框架。
 
-- 不要提交真实的 `.env`、API Key、数据库、日志和模型文件。
-- 演示数据中如包含真实课堂内容，应确认不涉及隐私信息。
-- 使用 MinerU 时，上传的课件、图片或文档会发送到 MinerU 云端解析；敏感材料请先脱敏或改用可控环境。
-- 如果部署到公网，建议增加鉴权、访问控制、HTTPS 和接口限流。
+建议继续沿着这三条业务线演进：
+
+1. 实时课堂
+2. 课后复习
+3. 学习工作台 / copilot
+
+agent 只作为上层编排层，不要反过来成为整个系统骨架。
+
+## 17. 安全与数据注意事项
+
+- 不要把真实 `.env`、API Key、数据库、日志和模型文件提交到仓库
+- MinerU 会把上传文件发往外部服务，敏感资料先脱敏
+- 公开部署时应补充鉴权、HTTPS、限流和存储隔离
+- 演示用课堂数据建议与真实教学数据分开
+
+## 18. 许可证与说明
+
+本仓库中的第三方模型、数据和 API 依赖各自遵循它们自己的许可证和使用条款。正式部署前，请分别核对：
+
+- FunASR / Paraformer
+- BGE
+- PaddleOCR
+- Qwen2.5-VL
+- YOLO11
+- MinerU
+- DeepSeek / OpenAI-compatible API

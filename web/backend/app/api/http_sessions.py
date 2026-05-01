@@ -16,8 +16,12 @@ from web.backend.app.services.chat_memory_service import chat_memory_service
 from web.backend.app.services.lesson_asset_service import lesson_asset_service, validate_asset_file_name
 from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
 from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
-from web.backend.app.services.session_rag_query_service import QueryScope, session_rag_query_service
-from web.backend.app.services.session_manager import session_manager
+from web.backend.app.services.session_rag_query_service import (
+    ClassroomContextMode,
+    QueryScope,
+    session_rag_query_service,
+)
+from src.application.runtime.session_manager import session_manager
 from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.session_video_service import session_video_service, validate_video_file_name
 from web.backend.app.services.session_vision_service import session_vision_service
@@ -40,7 +44,9 @@ class SessionQueryRequest(BaseModel):
     query: str
     scope: QueryScope = QueryScope.AUTO
     top_k: Optional[int] = None
-    with_llm: bool = False
+    with_llm: bool = True
+    include_rag_context: bool = False
+    classroom_context_mode: ClassroomContextMode = ClassroomContextMode.SESSION
 
 
 class SessionSummaryRequest(BaseModel):
@@ -417,6 +423,8 @@ async def query_session(session_id: str, payload: SessionQueryRequest):
             scope=payload.scope,
             top_k=payload.top_k,
             with_llm=payload.with_llm,
+            include_rag_context=payload.include_rag_context,
+            classroom_context_mode=payload.classroom_context_mode,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"session not found: {session_id}") from exc

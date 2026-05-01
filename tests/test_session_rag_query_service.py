@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 from src.core.knowledge.document_models import SearchResult
 from src.core.knowledge.query_filters import MetadataFilterSpec
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.chat_memory_service import ChatMemoryTurn
-from web.backend.app.services.session_rag_query_service import QueryScope, SessionRagQueryService
+from web.backend.app.services.session_rag_query_service import ClassroomContextMode, QueryScope, SessionRagQueryService
 
 
 class FakeQueryService:
@@ -215,14 +215,16 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             query_text="What is a limit?",
             scope=QueryScope.CURRENT_LESSON,
             with_llm=True,
+            include_rag_context=True,
         )
 
         self.assertEqual(answer.answer, "A limit is the value a function approaches near a point [1].")
-        self.assertEqual(answer.metadata["answer_strategy"], "llm_synthesized")
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_rag_synthesized")
         self.assertTrue(answer.metadata["llm_used"])
         self.assertFalse(answer.metadata["llm_fallback"])
         self.assertEqual(len(answer.citations), 2)
         self.assertIn("Question: What is a limit?", fake_llm.prompts[0])
+        self.assertIn("Retrieved context blocks:", fake_llm.prompts[0])
         self.assertIn("[1] doc_id=doc-1", fake_llm.prompts[0])
         self.assertIn("[2] doc_id=doc-2", fake_llm.prompts[0])
 
@@ -265,6 +267,7 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             query_text="What is a limit?",
             scope=QueryScope.CURRENT_LESSON,
             with_llm=True,
+            include_rag_context=True,
         )
 
         prompt = fake_llm.prompts[0]
@@ -297,10 +300,11 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             query_text="What did we just introduce?",
             scope=QueryScope.CURRENT_LESSON,
             with_llm=True,
+            include_rag_context=True,
         )
 
         self.assertEqual(answer.answer, "Based on the recent transcript, limits were introduced as approach values.")
-        self.assertEqual(answer.metadata["answer_strategy"], "llm_synthesized")
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_rag_synthesized")
         self.assertEqual(answer.metadata["citation_count"], 0)
         self.assertEqual(answer.metadata["recent_transcript_count"], 1)
         self.assertIn("[no context retrieved]", fake_llm.prompts[0])
@@ -347,6 +351,7 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             query_text="How is that different from a derivative?",
             scope=QueryScope.CURRENT_LESSON,
             with_llm=True,
+            include_rag_context=True,
         )
 
         search_query = fake_query_service.calls[0][0]
@@ -402,15 +407,176 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             with_llm=True,
         )
 
+        self.assertEqual(fake_query_service.calls, [])
         self.assertEqual(answer.answer, "It refers to the limit we discussed in the previous turn.")
-        self.assertEqual(answer.metadata["answer_strategy"], "llm_synthesized")
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_direct")
         self.assertEqual(answer.metadata["citation_count"], 0)
         self.assertEqual(answer.metadata["recent_transcript_count"], 0)
         self.assertEqual(answer.metadata["memory_turn_count"], 1)
-        self.assertIn("[no context retrieved]", fake_llm.prompts[0])
+        self.assertIn("Conversation history:", fake_llm.prompts[0])
+        self.assertNotIn("Retrieved context blocks:", fake_llm.prompts[0])
         self.assertIn("User: What is a limit?", fake_llm.prompts[0])
 
-    def test_query_session_falls_back_when_llm_synthesis_fails(self) -> None:
+    def test_query_session_direct_llm_prompt_includes_recent_classroom_context(self) -> None:
+        fake_query_service = FakeQueryService([])
+        fake_llm = FakeLLM("The lesson is about limits.")
+        transcript_items = [
+            self._transcript_item(chunk_id=1, text="Too old to keep."),
+            {
+                **self._transcript_item(chunk_id=2, text="PPT: A limit is a value approached by a function."),
+                "source_type": "video",
+                "metadata": {
+                    "parser": "manual_roi_ocr_vlm",
+                    "region": "ppt",
+                    "frame_timestamp_ms": 12_000,
+                },
+            },
+            {
+                **self._transcript_item(chunk_id=3, text="Blackboard: derivative rules on the board."),
+                "source_type": "video",
+                "metadata": {
+                    "parser": "manual_roi_ocr_vlm",
+                    "region": "blackboard",
+                    "frame_timestamp_ms": 13_000,
+                },
+            },
+        ]
+        transcript_items.extend(
+            self._transcript_item(chunk_id=chunk_id, text=f"Transcript {chunk_id}")
+            for chunk_id in range(4, 32)
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: transcript_items,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What are we looking at?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertEqual(answer.metadata["answer_prompt_version"], "direct-answer-v3")
+        self.assertEqual(answer.metadata["recent_classroom_context_count"], 30)
+        self.assertIn("Subject: math", prompt)
+        self.assertIn("Classroom context:", prompt)
+        self.assertNotIn("Too old to keep.", prompt)
+        self.assertIn("region=ppt", prompt)
+        self.assertIn("region=blackboard", prompt)
+        self.assertIn("Transcript 31", prompt)
+
+    def test_query_session_history_mode_uses_lesson_retrieval_without_recent_window_for_general_question(self) -> None:
+        fake_query_service = FakeQueryService(
+            [
+                SearchResult(
+                    doc_id="doc-1",
+                    content="PPT explained epsilon-delta limits.",
+                    score=0.93,
+                    session_id="session-z",
+                    subject="math",
+                    source_type="video",
+                    metadata={
+                        "course_id": "math-course",
+                        "lesson_id": "math-course-lesson-1",
+                        "parser": "manual_roi_ocr_vlm",
+                        "region": "ppt",
+                    },
+                )
+            ]
+        )
+        fake_llm = FakeLLM("The lesson focused on epsilon-delta limits.")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        lesson_transcripts = [
+            self._transcript_item(chunk_id=1, text="Earlier transcript one."),
+            self._transcript_item(chunk_id=2, text="Earlier transcript two."),
+        ]
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [],
+            lesson_transcript_loader=lambda **kwargs: lesson_transcripts,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What did this lesson focus on?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+            classroom_context_mode=ClassroomContextMode.LESSON,
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertEqual(answer.metadata["classroom_context_mode"], "lesson")
+        self.assertEqual(answer.metadata["retrieved_classroom_context_count"], 1)
+        self.assertEqual(answer.metadata["recent_lesson_window_count"], 0)
+        self.assertIn("context=retrieved", prompt)
+        self.assertIn("region=ppt", prompt)
+        self.assertNotIn("Earlier transcript one.", prompt)
+
+    def test_query_session_history_mode_adds_recent_window_for_recent_reference_question(self) -> None:
+        fake_query_service = FakeQueryService(
+            [
+                SearchResult(
+                    doc_id="doc-1",
+                    content="Retrieved context about limits.",
+                    score=0.88,
+                    session_id="session-z",
+                    subject="math",
+                    source_type="realtime",
+                    metadata={"course_id": "math-course", "lesson_id": "math-course-lesson-1"},
+                )
+            ]
+        )
+        fake_llm = FakeLLM("The teacher had just switched from limits to derivatives.")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        lesson_transcripts = [
+            self._transcript_item(chunk_id=1, text="Transcript 1"),
+            self._transcript_item(chunk_id=2, text="Transcript 2"),
+            self._transcript_item(chunk_id=3, text="Transcript 3"),
+            self._transcript_item(chunk_id=4, text="Transcript 4"),
+        ]
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [],
+            lesson_transcript_loader=lambda **kwargs: lesson_transcripts,
+            recent_lesson_window_limit=2,
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="刚才前面讲到哪里了？",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+            classroom_context_mode=ClassroomContextMode.LESSON,
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertEqual(answer.metadata["retrieved_classroom_context_count"], 1)
+        self.assertEqual(answer.metadata["recent_lesson_window_count"], 2)
+        self.assertIn("Transcript 3", prompt)
+        self.assertIn("Transcript 4", prompt)
+
+    def test_query_session_raises_when_llm_synthesis_fails(self) -> None:
         fake_query_service = FakeQueryService(
             [
                 SearchResult(
@@ -431,20 +597,14 @@ class SessionRagQueryServiceTests(unittest.TestCase):
             session_getter=lambda _: self._session(),
         )
 
-        answer = service.query_session(
-            session_id="session-a",
-            query_text="What did the lesson say about limits?",
-            scope=QueryScope.CURRENT_LESSON,
-            with_llm=True,
-        )
-
-        self.assertIsNone(answer.answer)
-        self.assertEqual(answer.metadata["answer_strategy"], "retrieval_fallback")
-        self.assertTrue(answer.metadata["llm_fallback"])
-        self.assertFalse(answer.metadata["llm_used"])
-        self.assertEqual(answer.metadata["llm_error"], "upstream llm timeout")
-        self.assertEqual(len(answer.results), 1)
-        self.assertEqual(len(answer.citations), 1)
+        with self.assertRaisesRegex(ValueError, "LLM synthesis failed"):
+            service.query_session(
+                session_id="session-a",
+                query_text="What did the lesson say about limits?",
+                scope=QueryScope.CURRENT_LESSON,
+                with_llm=True,
+                include_rag_context=True,
+            )
 
     def test_query_session_rejects_llm_mode_when_runtime_has_no_llm(self) -> None:
         runtime = SimpleNamespace(

@@ -1,5 +1,6 @@
 export type ModelKey = 'paraformer-zh' | 'paraformer-zh-streaming' | 'paraformer-zh-streaming-2pass'
 export type QueryScope = 'auto' | 'current_lesson' | 'course_all' | 'course_history' | 'global'
+export type ClassroomContextMode = 'session' | 'lesson'
 export type WebSocketState = 'closed' | 'connecting' | 'open'
 
 export interface ModelOption {
@@ -127,6 +128,84 @@ export interface LessonMessagesResponse {
   lesson_id: string
   count: number
   items: LessonMessageItem[]
+}
+
+export interface LessonNoteConcept {
+  term: string
+  explanation: string
+}
+
+export interface LessonNoteTimelineItem {
+  time: string
+  content: string
+}
+
+export interface LessonNotePayload {
+  title?: string
+  overview?: string
+  key_points?: string[]
+  concepts?: LessonNoteConcept[]
+  examples?: string[]
+  timeline?: LessonNoteTimelineItem[]
+  review_items?: string[]
+  questions?: string[]
+  [key: string]: unknown
+}
+
+export interface LessonNoteItem {
+  id?: number | null
+  note_id: string
+  course_id: string
+  lesson_id: string
+  session_id?: string | null
+  status: 'generating' | 'done' | 'failed' | string
+  title?: string | null
+  summary?: string | null
+  markdown?: string | null
+  note: LessonNotePayload
+  source_record_count: number
+  source_hash?: string | null
+  model_name?: string | null
+  error_message?: string | null
+  created_at: number
+  updated_at: number
+  metadata: Record<string, unknown>
+}
+
+export interface LessonNoteResponse {
+  item: LessonNoteItem
+}
+
+export interface GenerateLessonNotePayload {
+  session_id?: string | null
+  focus?: string | null
+  max_items?: number | null
+  force?: boolean
+}
+
+export interface GenerateLessonNoteResponse extends LessonNoteResponse {
+  queued: boolean
+}
+
+export interface LessonCopilotStepItem {
+  action: string
+  tool_name?: string | null
+  arguments?: Record<string, unknown>
+  tool_ok?: boolean | null
+  tool_result?: Record<string, unknown> | string | null
+  error?: string | null
+  final_answer?: string | null
+}
+
+export interface LessonCopilotResponse {
+  answer: string
+  steps: LessonCopilotStepItem[]
+  metadata: Record<string, unknown>
+}
+
+export interface LessonCopilotPayload {
+  message: string
+  session_id?: string | null
 }
 
 export interface LessonAssetItem {
@@ -289,6 +368,8 @@ export interface QuerySessionPayload {
   scope: QueryScope
   top_k?: number
   with_llm: boolean
+  include_rag_context: boolean
+  classroom_context_mode?: ClassroomContextMode
 }
 
 export interface RetrievalResult {

@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence
 from config.prompts import build_transcript_refine_prompt
 from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
-from web.backend.app.services.session_manager import session_manager
+from src.application.runtime.session_manager import session_manager
 from web.backend.app.services.transcript_service import transcript_service
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class SessionTranscriptRefineService:
         if not pending_records:
             return self.list_session_refined_transcripts(normalized_session_id)
 
+        self.delete_session_refined_transcripts(normalized_session_id)
         runtime = self._get_runtime()
         llm = getattr(runtime, "llm", None)
         if llm is None:
@@ -100,6 +101,7 @@ class SessionTranscriptRefineService:
         batches = self._build_batches(pending_records)
         for batch_index, batch in enumerate(batches, start=1):
             prompt = build_transcript_refine_prompt(
+                subject=getattr(session, "subject", None) if session else None,
                 transcript_records=batch,
                 batch_index=batch_index,
                 batch_count=len(batches),
@@ -120,7 +122,9 @@ class SessionTranscriptRefineService:
                     },
                 )
 
-        return self.list_session_refined_transcripts(normalized_session_id)
+        refined_records = self.list_session_refined_transcripts(normalized_session_id)
+        self._refresh_refined_video_subtitles(normalized_session_id)
+        return refined_records
 
     def append_refined_transcript_record(
         self,
@@ -197,6 +201,19 @@ class SessionTranscriptRefineService:
             (course_id, lesson_id),
         )
         return [_row_to_refined_record(row) for row in rows]
+
+    def delete_session_refined_transcripts(self, session_id: str) -> None:
+        normalized_session_id = (session_id or "").strip()
+        if not normalized_session_id:
+            return
+
+        self.store.execute(
+            """
+            DELETE FROM refined_transcript_records
+            WHERE session_id = ?
+            """,
+            (normalized_session_id,),
+        )
 
     def close(self) -> None:
         if callable(self.runtime_closer):
@@ -308,6 +325,18 @@ class SessionTranscriptRefineService:
             seen.add(source_record_id)
             results.append((source_record, refined_text))
         return results
+
+    def _refresh_refined_video_subtitles(self, session_id: str) -> None:
+        normalized_session_id = (session_id or "").strip()
+        if not normalized_session_id:
+            return
+
+        try:
+            from web.backend.app.services.session_video_service import session_video_service
+
+            session_video_service.refresh_refined_video_subtitles(normalized_session_id)
+        except Exception as exc:
+            logger.exception("Failed to refresh refined video subtitles for session %s: %s", normalized_session_id, exc)
 
     @staticmethod
     def _complete_text(llm: Any, prompt: str) -> str:

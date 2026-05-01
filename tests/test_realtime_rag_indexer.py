@@ -3,7 +3,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.realtime_rag_indexer import RealtimeRagIndexer
 
 

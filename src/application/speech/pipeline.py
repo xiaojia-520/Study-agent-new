@@ -1,4 +1,3 @@
-import queue
 import threading
 from typing import Optional
 
@@ -7,6 +6,7 @@ import numpy as np
 from src.core.asr.realtime_drivers import RealtimeASRDriver, build_realtime_asr_driver
 from src.core.asr.realtime_models import resolve_realtime_asr_model
 from src.core.asr.transcriber import ASRTranscriber
+from src.application.speech.stream_processor import RealtimeSpeechStreamProcessor
 from src.core.audio.frame_slicer import FrameSlicer
 from src.core.audio.recorder import AudioRecorder
 from src.core.audio.vad_processor import VADProcessor
@@ -20,13 +20,8 @@ class _RealtimeSpeechPipelineBase:
     def __init__(self, *, model_key: Optional[str] = None, on_partial=None, on_final=None):
         self.vad = VADProcessor()
         self.slicer = FrameSlicer(window_size=512)
+        self._driver_lock = threading.RLock()
 
-        self.q = queue.Queue(maxsize=2000)
-        self._stop_event = threading.Event()
-        self._worker = threading.Thread(target=self._asr_worker_loop, daemon=True)
-        self._cfg_lock = threading.Lock()
-
-        self._in_speech = False
         self._cb_in_speech = False
 
         self.chunk_size = [0, 10, 5]
@@ -40,6 +35,7 @@ class _RealtimeSpeechPipelineBase:
         self._current_model = resolve_realtime_asr_model(model_key)
         self.asr = ASRTranscriber(model_name=self._current_model.resolved_model_name)
         self._driver = self._build_driver()
+        self._processor = RealtimeSpeechStreamProcessor(driver_getter=self._get_driver)
 
     def _build_driver(self) -> RealtimeASRDriver:
         return build_realtime_asr_driver(
@@ -53,27 +49,20 @@ class _RealtimeSpeechPipelineBase:
         )
 
     def _start_worker(self) -> None:
-        self._stop_event.clear()
-        if not self._worker.is_alive():
-            self._worker = threading.Thread(target=self._asr_worker_loop, daemon=True)
-            self._worker.start()
+        self._processor.start()
 
     def _stop_worker(self) -> None:
-        self._stop_event.set()
-        try:
-            self.q.put_nowait(None)
-        except queue.Full:
-            pass
+        self._processor.stop()
 
-        if self._worker.is_alive():
-            self._worker.join(timeout=2.0)
+    def _get_driver(self) -> RealtimeASRDriver:
+        with self._driver_lock:
+            return self._driver
 
     def set_asr_model(self, model_key: str) -> None:
-        with self._cfg_lock:
+        with self._driver_lock:
             self._current_model = resolve_realtime_asr_model(model_key)
-            self._in_speech = False
             self._cb_in_speech = False
-            self._drain_queue()
+            self._processor.reset()
             self.asr = ASRTranscriber(model_name=self._current_model.resolved_model_name)
             self._driver = self._build_driver()
 
@@ -94,64 +83,12 @@ class _RealtimeSpeechPipelineBase:
                 if "start" in event:
                     self._cb_in_speech = True
 
-                self._put_nonblocking((event, chunk), critical=True)
+                self._processor.enqueue(event, chunk, critical=True)
 
                 if "end" in event:
                     self._cb_in_speech = False
             elif self._cb_in_speech:
-                self._put_nonblocking((None, chunk), critical=False)
-
-    def _drain_queue(self) -> None:
-        try:
-            while True:
-                self.q.get_nowait()
-        except queue.Empty:
-            pass
-
-    def _put_nonblocking(self, item, critical: bool = False) -> bool:
-        try:
-            self.q.put_nowait(item)
-            return True
-        except queue.Full:
-            if not critical:
-                return False
-            try:
-                self.q.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self.q.put_nowait(item)
-                return True
-            except queue.Full:
-                return False
-
-    def _asr_worker_loop(self) -> None:
-        while not self._stop_event.is_set():
-            item = self.q.get()
-            if item is None:
-                break
-
-            event, chunk = item
-            end_now = False
-
-            with self._cfg_lock:
-                driver = self._driver
-
-            if isinstance(event, dict):
-                if "start" in event:
-                    self._in_speech = True
-                    driver.on_start()
-                if "end" in event:
-                    end_now = True
-
-            if not self._in_speech:
-                continue
-
-            driver.on_chunk(chunk)
-
-            if end_now:
-                driver.on_end()
-                self._in_speech = False
+                self._processor.enqueue(None, chunk, critical=False)
 
 
 class SpeechPipeline(_RealtimeSpeechPipelineBase):

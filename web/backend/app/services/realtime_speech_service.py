@@ -8,18 +8,33 @@ from typing import Any
 import numpy as np
 from fastapi import WebSocket
 
+from src.application.live_classroom.realtime_event_publisher import RealtimeEventPublisher
+from src.application.live_classroom.transcript_finalization import TranscriptFinalizationService
+from src.application.runtime.session_manager import session_manager
 from src.application.speech.pipeline import WebSpeechPipeline
-from web.backend.app.domain.session import RealtimeSession
-from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
-from web.backend.app.services.session_manager import session_manager
-from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
-from web.backend.app.services.transcript_service import transcript_service
+from src.domain.session import RealtimeSession
+from web.backend.app.services.knowledge_ingestion_service import knowledge_ingestion_service
 
 logger = logging.getLogger(__name__)
 
 
 class RealtimeSpeechService:
-    """Coordinate websocket audio events, pipeline lifecycle, and transcript persistence."""
+    """Coordinate websocket audio events, pipeline lifecycle, and transcript ingestion."""
+
+    def __init__(
+        self,
+        *,
+        event_publisher: RealtimeEventPublisher | None = None,
+        transcript_finalizer: TranscriptFinalizationService | None = None,
+    ) -> None:
+        self.event_publisher = event_publisher or RealtimeEventPublisher(
+            sequence_getter=lambda session_id: session_manager.next_event_seq(session_id),
+        )
+        self.transcript_finalizer = transcript_finalizer or TranscriptFinalizationService(
+            session_getter=lambda session_id: session_manager.get_session(session_id),
+            transcript_writer=knowledge_ingestion_service,
+            logger=logger,
+        )
 
     def make_event_payload(
         self,
@@ -31,34 +46,21 @@ class RealtimeSpeechService:
         is_final: bool = False,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "type": event_type,
-            "session_id": session_id,
-            "seq": seq,
-            "is_final": is_final,
-            "timestamp": int(time.time()),
-        }
-        if text is not None:
-            payload["text"] = text
-        if extra:
-            payload.update(extra)
-        return payload
+        return self.event_publisher.make_event_payload(
+            session_id=session_id,
+            seq=seq,
+            event_type=event_type,
+            text=text,
+            is_final=is_final,
+            extra=extra,
+        )
 
     def make_sender(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, session_id: str):
-        def _send(event_type: str, text: str, *, is_final: bool) -> None:
-            if not text:
-                return
-            seq = session_manager.next_event_seq(session_id)
-            payload = self.make_event_payload(
-                session_id=session_id,
-                seq=seq,
-                event_type=event_type,
-                text=text,
-                is_final=is_final,
-            )
-            asyncio.run_coroutine_threadsafe(websocket.send_json(payload), loop)
-
-        return _send
+        return self.event_publisher.make_sender(
+            send_json=websocket.send_json,
+            loop=loop,
+            session_id=session_id,
+        )
 
     def create_pipeline(
         self,
@@ -78,19 +80,7 @@ class RealtimeSpeechService:
 
     def _handle_final_transcript(self, session_id: str, sender, text: str) -> None:
         sender("final_transcript", text, is_final=True)
-        if not text:
-            return
-
-        session = session_manager.get_session(session_id)
-        if session is None:
-            logger.warning("Skip transcript persistence because session %s was not found", session_id)
-            return
-        record = transcript_service.append_realtime_transcript(session, text)
-        if record is not None:
-            try:
-                realtime_rag_indexer.append_record(session, record)
-            except Exception as exc:
-                logger.exception("Failed to enqueue realtime transcript for RAG indexing: %s", exc)
+        self.transcript_finalizer.finalize(session_id, text)
 
     async def make_session_started_payload(self, session: RealtimeSession) -> dict[str, Any]:
         seq = session_manager.next_event_seq(session.session_id)
@@ -153,12 +143,11 @@ class RealtimeSpeechService:
 
     async def shutdown_session(self, session_id: str, pipeline: WebSpeechPipeline) -> dict[str, Any] | None:
         pipeline.stop()
-        realtime_rag_indexer.flush_session(session_id)
-        transcript_service.release_session(session_id)
+        knowledge_ingestion_service.flush_session(session_id)
+        knowledge_ingestion_service.release_session(session_id)
         session = session_manager.mark_disconnected(session_id)
         if session is None:
             return None
-        session_transcript_refine_service.enqueue_session(session_id)
         return self.make_event_payload(
             session_id=session_id,
             seq=session_manager.next_event_seq(session_id),

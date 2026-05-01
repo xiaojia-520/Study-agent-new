@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 
 
 @dataclass(frozen=True, slots=True)

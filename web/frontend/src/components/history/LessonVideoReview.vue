@@ -25,12 +25,16 @@ const selectedVideo = computed(
   () => videos.value.find((item) => item.video_id === selectedVideoId.value) ?? videos.value[0] ?? null,
 )
 const subtitles = computed(() => selectedVideo.value?.segments ?? [])
+const needsRefinedSubtitleRefresh = (item: SessionVideoItem): boolean =>
+  item.status === 'done' && !item.metadata?.subtitle_refined_at
 const videoSourceUrl = computed(() => {
   const video = selectedVideo.value
   return video?.video_url ? buildApiUrl(video.video_url, backendBaseUrl.value) : ''
 })
 const hasPendingVideo = computed(() =>
-  videos.value.some((item) => item.status === 'uploaded' || item.status === 'processing'),
+  videos.value.some(
+    (item) => item.status === 'uploaded' || item.status === 'processing' || needsRefinedSubtitleRefresh(item),
+  ),
 )
 
 let pollTimer: number | null = null
@@ -79,21 +83,24 @@ async function loadLessonVideos(): Promise<void> {
 
 async function refreshPendingVideos(): Promise<void> {
   const pending = videos.value.filter((item) => item.status === 'uploaded' || item.status === 'processing')
-  if (pending.length === 0) {
+  const refining = videos.value.filter(needsRefinedSubtitleRefresh)
+  const refreshTargets = [...pending, ...refining]
+  const uniqueTargets = Array.from(new Map(refreshTargets.map((item) => [item.video_id, item])).values())
+  if (uniqueTargets.length === 0) {
     clearPollTimer()
     return
   }
 
   try {
     const updates = await Promise.all(
-      pending.map((item) => fetchSessionVideo(item.video_id, backendBaseUrl.value)),
+      uniqueTargets.map((item) => fetchSessionVideo(item.video_id, backendBaseUrl.value)),
     )
     const byId = new Map(updates.map((item) => [item.item.video_id, item.item]))
     videos.value = videos.value.map((item) => byId.get(item.video_id) ?? item)
     updateStatusMessage()
     schedulePoll()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '刷新视频字幕状态失败。'
+    errorMessage.value = error instanceof Error ? error.message : '刷新字幕状态失败。'
     clearPollTimer()
   }
 }
@@ -106,7 +113,9 @@ function updateStatusMessage(): void {
   }
 
   if (video.status === 'done') {
-    statusMessage.value = `字幕已生成，共 ${video.segment_count} 段。`
+    statusMessage.value = needsRefinedSubtitleRefresh(video)
+      ? `字幕已生成，正在精修中，共 ${video.segment_count} 段。`
+      : `字幕已生成，共 ${video.segment_count} 段。`
     return
   }
   if (video.status === 'failed') {
@@ -172,7 +181,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article class="flex min-h-[360px] flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
+  <article class="flex h-full min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
     <div class="flex shrink-0 items-center justify-between gap-4 border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
       <div>
         <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
@@ -191,9 +200,9 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div class="grid min-h-0 flex-1 gap-3 p-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-      <section class="flex min-h-0 flex-col gap-3">
-        <div class="relative min-h-[260px] overflow-hidden rounded-[var(--radius-soft)] bg-[#111827]">
+    <div class="grid min-h-0 flex-1 gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section class="flex min-h-0 flex-col overflow-hidden">
+        <div class="relative min-h-0 flex-1 overflow-hidden rounded-[var(--radius-soft)] bg-[#111827]">
           <video
             v-if="videoSourceUrl"
             ref="videoRef"
@@ -211,24 +220,10 @@ onBeforeUnmount(() => {
               Review Player
             </div>
             <p class="max-w-[28rem] text-sm leading-6 text-white/72">
-              这节课还没有可回放的视频。录制课堂并完成上传后，这里会显示视频和字幕。
+              这节课还没有可回放的视频。录制并完成上传后，这里会显示视频和字幕。
             </p>
           </div>
         </div>
-
-        <p
-          v-if="errorMessage"
-          class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
-        >
-          {{ errorMessage }}
-        </p>
-
-        <p
-          v-else-if="statusMessage"
-          class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.1)] bg-[rgba(var(--bg-muted),0.72)] px-3 py-2 text-sm text-[rgb(var(--text-subtle))]"
-        >
-          {{ statusMessage }}
-        </p>
 
         <div
           v-if="videos.length > 1"
@@ -276,11 +271,18 @@ onBeforeUnmount(() => {
             />
           </div>
 
+          <p
+            v-else-if="errorMessage"
+            class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
+          >
+            {{ errorMessage }}
+          </p>
+
           <div
             v-else-if="subtitles.length === 0"
             class="flex h-full min-h-[180px] items-center justify-center rounded-[var(--radius-soft)] border border-dashed border-[rgba(var(--line-soft),0.14)] px-5 text-center text-sm leading-6 text-[rgb(var(--text-faint))]"
           >
-            {{ selectedVideo?.status === 'failed' ? '字幕生成失败，请回课堂页重新录制或后续做重试。' : '暂无字幕。视频处理完成后会出现在这里。' }}
+            {{ selectedVideo?.status === 'failed' ? '字幕生成失败，请稍后重试。' : '暂无字幕。' }}
           </div>
 
           <button
@@ -298,6 +300,13 @@ onBeforeUnmount(() => {
               {{ segment.text }}
             </span>
           </button>
+        </div>
+
+        <div
+          v-if="statusMessage"
+          class="shrink-0 border-t border-[rgba(var(--line-soft),0.08)] px-3 py-2 text-xs text-[rgb(var(--text-faint))]"
+        >
+          {{ statusMessage }}
         </div>
       </section>
     </div>

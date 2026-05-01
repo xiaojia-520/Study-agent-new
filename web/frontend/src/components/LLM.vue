@@ -5,15 +5,23 @@ import { storeToRefs } from 'pinia'
 import { useRagChatStore } from '../stores/ragChat'
 
 const ragChatStore = useRagChatStore()
-const { chatMessages, currentQuestion, errorMessage, retrievalResults, sending } =
-  storeToRefs(ragChatStore)
+const {
+  chatMessages,
+  currentQuestion,
+  errorMessage,
+  includeRagContext,
+  retrievalResults,
+  sending,
+} = storeToRefs(ragChatStore)
 
 const scrollContainerRef = ref<HTMLElement | null>(null)
 
 const contextSummary = computed(() =>
-  retrievalResults.value.length > 0
-    ? `将带入 ${retrievalResults.value.length} 条真实检索片段作为上下文`
-    : '当前没有检索上下文，先录音后提问',
+  includeRagContext.value
+    ? retrievalResults.value.length > 0
+      ? `RAG 已开启 · ${retrievalResults.value.length} 条检索结果`
+      : 'RAG 已开启 · 等待检索结果'
+    : '纯 LLM 模式',
 )
 
 function formatTimestamp(timestamp: number): string {
@@ -56,6 +64,15 @@ watch(
         {{ contextSummary }}
       </span>
     </div>
+
+    <label class="mt-3 inline-flex items-center gap-2 text-sm text-[rgb(var(--text-subtle))]">
+      <input
+        v-model="includeRagContext"
+        type="checkbox"
+        class="h-4 w-4 rounded border-[rgba(var(--line-soft),0.2)] text-[rgb(var(--accent))] focus:ring-[rgba(var(--accent),0.2)]"
+      />
+      <span>RAG 检索加入 prompt</span>
+    </label>
 
     <div
       ref="scrollContainerRef"
@@ -103,7 +120,7 @@ watch(
         <input
           v-model="currentQuestion"
           type="text"
-          placeholder="输入问题，右侧会调用真实 /query 接口并返回答案"
+          placeholder="输入问题，默认走 LLM；勾选 RAG 后会把检索结果加入 prompt。"
           class="w-full rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-3 outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
         />
       </label>
@@ -113,7 +130,7 @@ watch(
         class="inline-flex shrink-0 items-center justify-center rounded-[var(--radius-soft)] bg-[rgb(var(--accent))] px-4 py-3 font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
         :disabled="sending || !currentQuestion.trim()"
       >
-        {{ sending ? '发送中...' : '发送' }}
+        {{ sending ? '发送中...' : '提问' }}
       </button>
     </form>
   </section>

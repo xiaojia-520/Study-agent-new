@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.session_video_service import SessionVideoService
 
 
@@ -151,13 +152,65 @@ def test_session_video_service_rebuilds_rag_with_final_transcripts(tmp_path, mon
         media_type="video/webm",
     )
 
-    service.process_video(video.video_id)
+    with patch(
+        "web.backend.app.services.session_video_service.session_transcript_refine_service.enqueue_session"
+    ) as enqueue_mock:
+        service.process_video(video.video_id)
 
     assert len(runtime.index_store.deleted_filters) == 1
     assert len(runtime.indexing_service.indexed_records) == 1
     indexed_records = runtime.indexing_service.indexed_records[0]
     assert [record.content for record in indexed_records] == ["hello"]
     assert indexed_records[0].metadata["parser"] == "offline_funasr"
+    enqueue_mock.assert_called_once_with("session-1")
+
+
+def test_session_video_service_refreshes_refined_video_subtitles(tmp_path, monkeypatch):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "VIDEO_SUBTITLE_DIR", tmp_path / "subtitles")
+    service = SessionVideoService(
+        store=SQLiteStore(tmp_path / "study.sqlite3"),
+        subtitle_service=_FakeSubtitleService(),
+        rag_indexing_enabled=False,
+    )
+    service.init_schema()
+
+    video_path = tmp_path / "lesson.webm"
+    video_path.write_bytes(b"fake video")
+    session = RealtimeSession(
+        session_id="session-1",
+        course_id="course-1",
+        lesson_id="lesson-1",
+        subject="demo",
+    )
+    video = service.create_video(
+        video_id="video-1",
+        session=session,
+        file_name="lesson.webm",
+        file_path=video_path,
+        file_size=video_path.stat().st_size,
+        media_type="video/webm",
+    )
+
+    service.process_video(video.video_id)
+    before = service.get_video(video.video_id)
+    assert before is not None
+    transcript_items = service.transcript_writer.list_session_transcripts(None, "session-1")
+    assert transcript_items
+    source_record_id = int(transcript_items[0]["id"])
+
+    with patch(
+        "web.backend.app.services.session_video_service.session_transcript_refine_service.list_session_refined_transcripts",
+        return_value=[SimpleNamespace(source_record_id=source_record_id, refined_text="hello refined")],
+    ):
+        service.refresh_refined_video_subtitles("session-1")
+
+    processed = service.get_video(video.video_id)
+    assert processed is not None
+    assert processed.segments == ({"start_ms": 0, "end_ms": 1000, "text": "hello refined"},)
+    assert processed.metadata["subtitle_refined_at"]
+    assert processed.metadata["subtitle_refined_record_count"] == 1
 
 
 def test_session_video_service_lists_lesson_videos(tmp_path):

@@ -5,7 +5,7 @@ from threading import Event
 
 from PIL import Image
 
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.session_vision_service import SessionVisionService
 
 

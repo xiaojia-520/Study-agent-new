@@ -11,7 +11,7 @@ from typing import Any, Mapping
 from config.settings import settings
 from src.core.knowledge.transcript_jsonl_store import TranscriptJsonlStore
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 
 logger = logging.getLogger(__name__)
 

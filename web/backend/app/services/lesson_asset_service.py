@@ -8,8 +8,8 @@ from typing import Any, Iterable
 
 from config.settings import settings
 from src.application.documents.lesson_asset_record_builder import LessonAssetRecordBuilder
+from src.application.rag.ingestion_service import KnowledgeIngestionService
 from src.application.rag.runtime import get_shared_rag_runtime
-from src.core.knowledge.document_models import TranscriptRecord
 from src.core.documents.asset_files import (
     find_markdown_file,
     safe_extract_zip,
@@ -23,7 +23,7 @@ from src.infrastructure.document.mineru_client import (
 )
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.domain.assets import LessonAsset
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.lesson_asset_repository import LessonAssetRepository
 from web.backend.app.services.transcript_service import transcript_service
 
@@ -45,12 +45,18 @@ class LessonAssetService:
         runtime_factory=get_shared_rag_runtime,
         repository: LessonAssetRepository | None = None,
         record_builder: LessonAssetRecordBuilder | None = None,
+        ingestion_service: KnowledgeIngestionService | None = None,
     ) -> None:
         self.repository = repository or LessonAssetRepository(store=store)
         self.store = self.repository.store
         self.mineru_client = mineru_client or MineruClient()
         self.transcript_writer = transcript_writer
         self.runtime_factory = runtime_factory
+        self.ingestion_service = ingestion_service or KnowledgeIngestionService(
+            transcript_writer=transcript_writer,
+            runtime_factory=runtime_factory,
+            rag_indexing_enabled=settings.MINERU_AUTO_INDEX_ENABLED,
+        )
         self.record_builder = record_builder or LessonAssetRecordBuilder(
             transcript_writer=transcript_writer,
         )
@@ -156,18 +162,13 @@ class LessonAssetService:
 
         asset = self.get_asset(asset.asset_id) or asset
         records = self.record_builder.build_transcript_records(asset, result_dir)
-        for record in records:
-            self.transcript_writer.append_transcript_record(record)
+        self.ingestion_service.persist_records(records)
 
         markdown_path = find_markdown_file(result_dir)
         indexed_at = None
         if settings.MINERU_AUTO_INDEX_ENABLED and records:
             try:
-                runtime = self.runtime_factory()
-                runtime.indexing_service.index_records(
-                    [TranscriptRecord.from_dict(record) for record in records],
-                    embed_model=runtime.embed_model,
-                )
+                self.ingestion_service.index_records_immediately(records)
                 indexed_at = int(time.time())
             except Exception as exc:
                 self._update_asset(

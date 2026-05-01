@@ -1,6 +1,6 @@
 import unittest
 
-from web.backend.app.services.session_manager import SessionManager
+from src.application.runtime.session_manager import SessionManager
 
 
 class SessionManagerTests(unittest.TestCase):

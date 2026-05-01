@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.chat_memory_service import ChatMemoryService
 
 

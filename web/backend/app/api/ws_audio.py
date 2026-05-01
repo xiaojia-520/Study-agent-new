@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from web.backend.app.services.realtime_speech_service import realtime_speech_service
 
 # 会话管理器（用于管理 session 生命周期）
-from web.backend.app.services.session_manager import session_manager
+from src.application.runtime.session_manager import session_manager
 
 # 创建一个路由器，并打上标签
 router = APIRouter(tags=["realtime-audio"])

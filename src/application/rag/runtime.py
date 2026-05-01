@@ -6,10 +6,7 @@ import threading
 from typing import Any
 
 from config.settings import settings
-from src.application.rag.indexing_service import RagIndexingService
-from src.application.rag.query_service import RagQueryService
 from src.core.knowledge.document_models import ChunkingOptions
-from src.core.knowledge.llamaindex_builder import build_default_embed_model
 from src.infrastructure.storage.qdrant_index_store import QdrantIndexStore, QdrantIndexStoreConfig
 
 
@@ -67,8 +64,8 @@ class RagRuntime:
     index_store: QdrantIndexStore
     embed_model: Any
     llm: Any | None
-    indexing_service: RagIndexingService
-    query_service: RagQueryService
+    indexing_service: Any
+    query_service: Any
 
 
 _shared_runtime: RagRuntime | None = None
@@ -77,6 +74,10 @@ _shared_runtime_lock = threading.RLock()
 
 
 def build_rag_runtime(config: RagRuntimeConfig | None = None) -> RagRuntime:
+    from src.application.rag.indexing_service import RagIndexingService
+    from src.application.rag.query_service import RagQueryService
+    from src.core.knowledge.llamaindex_builder import build_default_embed_model
+
     runtime_config = config or RagRuntimeConfig.from_settings()
     embed_model = build_default_embed_model(runtime_config.embed_model_name)
     vector_dim = _infer_embed_model_dim(embed_model)

@@ -10,7 +10,7 @@ from config.settings import settings
 from src.core.documents.asset_files import sanitize_asset_filename
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
 from web.backend.app.domain.assets import LessonAsset
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 
 
 class LessonAssetRepository:

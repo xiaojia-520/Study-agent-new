@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -10,6 +10,7 @@ import {
   fetchRefinedLessonTranscripts,
   querySession,
 } from '../api/studyAgent'
+import ResizableSplit from '../components/common/ResizableSplit.vue'
 import LessonVideoReview from '../components/history/LessonVideoReview.vue'
 import SideBar from '../components/history/SideBar.vue'
 import { useSessionStore } from '../stores/session'
@@ -30,6 +31,7 @@ const messages = ref<LessonMessageItem[]>([])
 const transcripts = ref<TranscriptRecordItem[]>([])
 const refinedTranscripts = ref<RefinedTranscriptRecordItem[]>([])
 const transcriptViewMode = ref<'raw' | 'refined'>('raw')
+const historySplitRatio = ref(44)
 const loadingMessages = ref(false)
 const loadingTranscripts = ref(false)
 const loadingRefinedTranscripts = ref(false)
@@ -118,15 +120,6 @@ async function loadRefinedLessonTranscripts(courseId: string, lessonId: string):
   }
 }
 
-function shouldRetryWithoutLlm(message: string): boolean {
-  const normalized = message.toLowerCase()
-  return (
-    normalized.includes('llm is not enabled') ||
-    normalized.includes('openai-compatible llm support') ||
-    normalized.includes('rag_llm_api_key')
-  )
-}
-
 async function ensureReviewSession(): Promise<SessionInfo> {
   if (reviewSession.value) {
     return reviewSession.value
@@ -182,35 +175,18 @@ async function sendFollowUpQuestion(): Promise<void> {
 
   try {
     const session = await ensureReviewSession()
-    let response: QueryResponse
-
-    try {
-      response = await querySession(
-        session.session_id,
-        {
-          query: question,
-          scope: 'auto',
-          top_k: 5,
-          with_llm: true,
-        },
-        backendBaseUrl.value,
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '历史追问失败。'
-      if (!shouldRetryWithoutLlm(message)) {
-        throw error
-      }
-      response = await querySession(
-        session.session_id,
-        {
-          query: question,
-          scope: 'auto',
-          top_k: 5,
-          with_llm: false,
-        },
-        backendBaseUrl.value,
-      )
-    }
+    const response = await querySession(
+      session.session_id,
+      {
+        query: question,
+        scope: 'auto',
+        top_k: 5,
+        with_llm: true,
+        include_rag_context: false,
+        classroom_context_mode: 'lesson',
+      },
+      backendBaseUrl.value,
+    )
 
     const now = Math.floor(Date.now() / 1000)
     messages.value = [
@@ -339,210 +315,224 @@ function formatTimelineTime(timestamp?: number): string {
               </article>
             </div>
 
-            <LessonVideoReview
-              class="mt-4 shrink-0"
-              :course-id="selectedLesson.course_id"
-              :lesson-id="selectedLesson.lesson_id"
-            />
+            <ResizableSplit
+              v-model="historySplitRatio"
+              class="mt-5 min-h-0 flex-1"
+              direction="horizontal"
+              :min="28"
+              :max="72"
+            >
+              <template #before>
+                <LessonVideoReview
+                  class="h-full"
+                  :course-id="selectedLesson.course_id"
+                  :lesson-id="selectedLesson.lesson_id"
+                />
+              </template>
 
-            <div class="mt-5 grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
-              <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
-                <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
-                  <div>
-                    <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
-                      QA Timeline
-                    </p>
-                    <h3 class="text-base font-semibold text-[rgb(var(--text-main))]">历史问答记录</h3>
-                  </div>
-                  <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1 text-sm text-[rgb(var(--text-subtle))]">
-                    {{ messages.length }} 条
-                  </span>
-                </div>
-
-                <div class="min-h-0 flex-1 overflow-y-auto p-4">
-                  <p
-                    v-if="messageError"
-                    class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
-                  >
-                    {{ messageError }}
-                  </p>
-
-                  <div v-else-if="loadingMessages" class="space-y-3">
-                    <div
-                      v-for="index in 5"
-                      :key="index"
-                      class="h-24 animate-pulse rounded-[var(--radius-soft)] bg-[rgba(var(--bg-muted),0.9)]"
-                    />
-                  </div>
-
-                  <div
-                    v-else-if="messages.length === 0"
-                    class="flex h-full min-h-[240px] items-center justify-center rounded-[var(--radius-soft)] border border-dashed border-[rgba(var(--line-soft),0.14)] px-6 text-center text-sm text-[rgb(var(--text-faint))]"
-                  >
-                    这节课还没有历史问答。
-                  </div>
-
-                  <div v-else class="space-y-3">
-                    <section
-                      v-for="item in messages"
-                      :key="item.id"
-                      class="rounded-[var(--radius-soft)] border p-4"
-                      :class="
-                        item.role === 'user'
-                          ? 'border-[rgba(var(--accent),0.14)] bg-[rgba(var(--accent),0.08)]'
-                          : 'border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))]'
-                      "
-                    >
-                      <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
-                        <span>{{ formatTimelineTime(item.created_at) }}</span>
-                        <span>/</span>
-                        <span>{{ item.role === 'user' ? '提问' : '回答' }}</span>
-                        <span>/</span>
-                        <span>Session {{ item.session_id.slice(0, 8) }}</span>
+              <template #after>
+                <div class="flex h-full min-h-0 flex-col overflow-hidden">
+                  <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+                    <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
+                      <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
+                        <div>
+                          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
+                            QA Timeline
+                          </p>
+                          <h3 class="text-base font-semibold text-[rgb(var(--text-main))]">历史问答记录</h3>
+                        </div>
+                        <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1 text-sm text-[rgb(var(--text-subtle))]">
+                          {{ messages.length }} 条
+                        </span>
                       </div>
-                      <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
-                        {{ item.content }}
-                      </p>
-                    </section>
-                  </div>
-                </div>
 
-                <form
-                  class="shrink-0 border-t border-[rgba(var(--line-soft),0.08)] p-3"
-                  @submit.prevent="sendFollowUpQuestion"
-                >
-                  <p
-                    v-if="followUpError"
-                    class="mb-2 rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
-                  >
-                    {{ followUpError }}
-                  </p>
-
-                  <div class="flex gap-2">
-                    <input
-                      v-model="followUpQuestion"
-                      type="text"
-                      placeholder="继续追问这节课的内容..."
-                      class="min-w-0 flex-1 rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-elevated))] px-3 py-2.5 text-sm outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
-                    />
-                    <button
-                      type="submit"
-                      class="shrink-0 rounded-[var(--radius-soft)] bg-[rgb(var(--accent))] px-4 py-2.5 text-sm font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-                      :disabled="sendingFollowUp || !followUpQuestion.trim()"
-                    >
-                      {{ sendingFollowUp ? '发送中' : '追问' }}
-                    </button>
-                  </div>
-
-                  <p class="mt-2 text-xs text-[rgb(var(--text-faint))]">
-                    {{ reviewSession ? `Review session ${reviewSession.session_id.slice(0, 8)}` : '发送时会自动创建 review session' }}
-                  </p>
-                </form>
-              </article>
-
-              <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
-                <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
-                  <div>
-                    <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
-                      Voice Timeline
-                    </p>
-                    <h3 class="text-base font-semibold text-[rgb(var(--text-main))]">语音转写记录</h3>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <div class="rounded-full bg-[rgba(var(--bg-muted),0.95)] p-1 text-xs font-semibold text-[rgb(var(--text-subtle))]">
-                      <button
-                        type="button"
-                        class="rounded-full px-3 py-1 transition"
-                        :class="transcriptViewMode === 'raw' ? 'bg-[rgb(var(--accent))] text-[rgb(var(--text-inverse))]' : 'hover:bg-[rgba(var(--line-soft),0.08)]'"
-                        @click="transcriptViewMode = 'raw'"
-                      >
-                        原始
-                      </button>
-                      <button
-                        type="button"
-                        class="rounded-full px-3 py-1 transition"
-                        :class="transcriptViewMode === 'refined' ? 'bg-[rgb(var(--accent))] text-[rgb(var(--text-inverse))]' : 'hover:bg-[rgba(var(--line-soft),0.08)]'"
-                        @click="transcriptViewMode = 'refined'"
-                      >
-                        LLM 精修
-                      </button>
-                    </div>
-                    <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1 text-sm text-[rgb(var(--text-subtle))]">
-                      {{ activeTranscriptCount }} 条
-                    </span>
-                  </div>
-                </div>
-
-                <div class="min-h-0 flex-1 overflow-y-auto p-4">
-                  <p
-                    v-if="activeTranscriptError"
-                    class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
-                  >
-                    {{ activeTranscriptError }}
-                  </p>
-
-                  <div v-else-if="activeTranscriptLoading" class="space-y-3">
-                    <div
-                      v-for="index in 5"
-                      :key="index"
-                      class="h-20 animate-pulse rounded-[var(--radius-soft)] bg-[rgba(var(--bg-muted),0.9)]"
-                    />
-                  </div>
-
-                  <div
-                    v-else-if="activeTranscriptEmpty"
-                    class="flex h-full min-h-[240px] items-center justify-center rounded-[var(--radius-soft)] border border-dashed border-[rgba(var(--line-soft),0.14)] px-6 text-center text-sm text-[rgb(var(--text-faint))]"
-                  >
-                    {{ transcriptViewMode === 'refined' ? '暂无 LLM 精修结果，停止录音后会在后台生成。' : '这节课还没有语音转写记录。' }}
-                  </div>
-
-                  <div v-else class="space-y-3">
-                    <template v-if="transcriptViewMode === 'refined'">
-                      <section
-                        v-for="item in refinedTranscripts"
-                        :key="`refined-${item.id}`"
-                        class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-4"
-                      >
-                        <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
-                          <span>{{ formatTimelineTime(item.created_at) }}</span>
-                          <span>/</span>
-                          <span>chunk {{ item.chunk_id ?? '-' }}</span>
-                          <span>/</span>
-                          <span>Session {{ item.session_id?.slice(0, 8) || '-' }}</span>
-                          <span>/</span>
-                          <span>{{ item.model_name || 'LLM' }}</span>
-                        </div>
-                        <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
-                          {{ item.refined_text }}
+                      <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                        <p
+                          v-if="messageError"
+                          class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
+                        >
+                          {{ messageError }}
                         </p>
-                        <details class="mt-3 text-xs text-[rgb(var(--text-faint))]">
-                          <summary class="cursor-pointer select-none font-semibold">原始转写</summary>
-                          <p class="mt-2 whitespace-pre-wrap leading-5">{{ item.original_text }}</p>
-                        </details>
-                      </section>
-                    </template>
-                    <template v-else>
-                      <section
-                        v-for="item in transcripts"
-                        :key="`${item.session_id}-${item.chunk_id}`"
-                        class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-4"
-                      >
-                        <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
-                          <span>{{ formatTimelineTime(item.created_at) }}</span>
-                          <span>/</span>
-                          <span>chunk {{ item.chunk_id ?? '-' }}</span>
-                          <span>/</span>
-                          <span>Session {{ item.session_id?.slice(0, 8) || '-' }}</span>
+
+                        <div v-else-if="loadingMessages" class="space-y-3">
+                          <div
+                            v-for="index in 5"
+                            :key="index"
+                            class="h-24 animate-pulse rounded-[var(--radius-soft)] bg-[rgba(var(--bg-muted),0.9)]"
+                          />
                         </div>
-                        <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
-                          {{ item.clean_text || item.text }}
+
+                        <div
+                          v-else-if="messages.length === 0"
+                          class="flex h-full min-h-[240px] items-center justify-center rounded-[var(--radius-soft)] border border-dashed border-[rgba(var(--line-soft),0.14)] px-6 text-center text-sm text-[rgb(var(--text-faint))]"
+                        >
+                          这节课还没有历史问答。
+                        </div>
+
+                        <div v-else class="space-y-3">
+                          <section
+                            v-for="item in messages"
+                            :key="item.id"
+                            class="rounded-[var(--radius-soft)] border p-4"
+                            :class="
+                              item.role === 'user'
+                                ? 'border-[rgba(var(--accent),0.14)] bg-[rgba(var(--accent),0.08)]'
+                                : 'border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))]'
+                            "
+                          >
+                            <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                              <span>{{ formatTimelineTime(item.created_at) }}</span>
+                              <span>/</span>
+                              <span>{{ item.role === 'user' ? '提问' : '回答' }}</span>
+                              <span>/</span>
+                              <span>Session {{ item.session_id.slice(0, 8) }}</span>
+                            </div>
+                            <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
+                              {{ item.content }}
+                            </p>
+                          </section>
+                        </div>
+                      </div>
+
+                      <form
+                        class="shrink-0 border-t border-[rgba(var(--line-soft),0.08)] p-3"
+                        @submit.prevent="sendFollowUpQuestion"
+                      >
+                        <p
+                          v-if="followUpError"
+                          class="mb-2 rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
+                        >
+                          {{ followUpError }}
                         </p>
-                      </section>
-                    </template>
+
+                        <div class="flex gap-2">
+                          <input
+                            v-model="followUpQuestion"
+                            type="text"
+                            placeholder="继续追问这节课的内容..."
+                            class="min-w-0 flex-1 rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-elevated))] px-3 py-2.5 text-sm outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
+                          />
+                          <button
+                            type="submit"
+                            class="shrink-0 rounded-[var(--radius-soft)] bg-[rgb(var(--accent))] px-4 py-2.5 text-sm font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                            :disabled="sendingFollowUp || !followUpQuestion.trim()"
+                          >
+                            {{ sendingFollowUp ? '发送中' : '追问' }}
+                          </button>
+                        </div>
+
+                        <p class="mt-2 text-xs text-[rgb(var(--text-faint))]">
+                          {{ reviewSession ? `Review session ${reviewSession.session_id.slice(0, 8)}` : '发送时会自动创建 review session' }}
+                        </p>
+                      </form>
+                    </article>
+
+                    <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
+                      <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
+                        <div>
+                          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
+                            Voice Timeline
+                          </p>
+                          <h3 class="text-base font-semibold text-[rgb(var(--text-main))]">语音转写记录</h3>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <div class="rounded-full bg-[rgba(var(--bg-muted),0.95)] p-1 text-xs font-semibold text-[rgb(var(--text-subtle))]">
+                            <button
+                              type="button"
+                              class="rounded-full px-3 py-1 transition"
+                              :class="transcriptViewMode === 'raw' ? 'bg-[rgb(var(--accent))] text-[rgb(var(--text-inverse))]' : 'hover:bg-[rgba(var(--line-soft),0.08)]'"
+                              @click="transcriptViewMode = 'raw'"
+                            >
+                              原始
+                            </button>
+                            <button
+                              type="button"
+                              class="rounded-full px-3 py-1 transition"
+                              :class="transcriptViewMode === 'refined' ? 'bg-[rgb(var(--accent))] text-[rgb(var(--text-inverse))]' : 'hover:bg-[rgba(var(--line-soft),0.08)]'"
+                              @click="transcriptViewMode = 'refined'"
+                            >
+                              LLM 精修
+                            </button>
+                          </div>
+                          <span class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1 text-sm text-[rgb(var(--text-subtle))]">
+                            {{ activeTranscriptCount }} 条
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                        <p
+                          v-if="activeTranscriptError"
+                          class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
+                        >
+                          {{ activeTranscriptError }}
+                        </p>
+
+                        <div v-else-if="activeTranscriptLoading" class="space-y-3">
+                          <div
+                            v-for="index in 5"
+                            :key="index"
+                            class="h-20 animate-pulse rounded-[var(--radius-soft)] bg-[rgba(var(--bg-muted),0.9)]"
+                          />
+                        </div>
+
+                        <div
+                          v-else-if="activeTranscriptEmpty"
+                          class="flex h-full min-h-[240px] items-center justify-center rounded-[var(--radius-soft)] border border-dashed border-[rgba(var(--line-soft),0.14)] px-6 text-center text-sm text-[rgb(var(--text-faint))]"
+                        >
+                          {{ transcriptViewMode === 'refined' ? '暂无 LLM 精修结果，停止录音后会在后台生成。' : '这节课还没有语音转写记录。' }}
+                        </div>
+
+                        <div v-else class="space-y-3">
+                          <template v-if="transcriptViewMode === 'refined'">
+                            <section
+                              v-for="item in refinedTranscripts"
+                              :key="`refined-${item.id}`"
+                              class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-4"
+                            >
+                              <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                                <span>{{ formatTimelineTime(item.created_at) }}</span>
+                                <span>/</span>
+                                <span>chunk {{ item.chunk_id ?? '-' }}</span>
+                                <span>/</span>
+                                <span>Session {{ item.session_id?.slice(0, 8) || '-' }}</span>
+                                <span>/</span>
+                                <span>{{ item.model_name || 'LLM' }}</span>
+                              </div>
+                              <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
+                                {{ item.refined_text }}
+                              </p>
+                              <details class="mt-3 text-xs text-[rgb(var(--text-faint))]">
+                                <summary class="cursor-pointer select-none font-semibold">原始转写</summary>
+                                <p class="mt-2 whitespace-pre-wrap leading-5">{{ item.original_text }}</p>
+                              </details>
+                            </section>
+                          </template>
+                          <template v-else>
+                            <section
+                              v-for="item in transcripts"
+                              :key="`${item.session_id}-${item.chunk_id}`"
+                              class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-4"
+                            >
+                              <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                                <span>{{ formatTimelineTime(item.created_at) }}</span>
+                                <span>/</span>
+                                <span>chunk {{ item.chunk_id ?? '-' }}</span>
+                                <span>/</span>
+                                <span>Session {{ item.session_id?.slice(0, 8) || '-' }}</span>
+                              </div>
+                              <p class="mt-3 whitespace-pre-wrap text-sm leading-6 text-[rgb(var(--text-main))]">
+                                {{ item.clean_text || item.text }}
+                              </p>
+                            </section>
+                          </template>
+                        </div>
+                      </div>
+                    </article>
                   </div>
                 </div>
-              </article>
-            </div>
+              </template>
+            </ResizableSplit>
           </template>
 
           <div

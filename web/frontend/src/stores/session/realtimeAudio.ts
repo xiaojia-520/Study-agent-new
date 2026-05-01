@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 
-import { buildWebSocketUrl } from '../../api/studyAgent'
+import { RealtimeSocketClient } from '../../api/realtimeSocketClient'
+import { downsampleBuffer } from '../../features/live-classroom/audioResampler'
 import type {
   RealtimeEvent,
   SessionInfo,
@@ -42,13 +43,21 @@ export function createRealtimeAudioActions(args: {
     showRefineStatusToast,
   } = args
 
-  let websocket: WebSocket | null = null
-  let socketConnectPromise: Promise<void> | null = null
   let mediaStream: MediaStream | null = null
   let audioContext: AudioContext | null = null
   let mediaSourceNode: MediaStreamAudioSourceNode | null = null
   let processorNode: ScriptProcessorNode | null = null
   let muteGainNode: GainNode | null = null
+
+  const socketClient = new RealtimeSocketClient({
+    onEvent: handleRealtimeEvent,
+    onStateChange: (state) => {
+      websocketState.value = state
+    },
+    onError: (message) => {
+      errorMessage.value = message
+    },
+  })
 
   async function releaseAudioResources(): Promise<void> {
     if (processorNode) {
@@ -75,86 +84,16 @@ export function createRealtimeAudioActions(args: {
   }
 
   async function disconnectWebSocket(): Promise<void> {
-    if (websocket) {
-      const currentSocket = websocket
-      websocket = null
-      socketConnectPromise = null
-
-      if (
-        currentSocket.readyState === WebSocket.CONNECTING ||
-        currentSocket.readyState === WebSocket.OPEN
-      ) {
-        currentSocket.close(1000, 'client disconnect')
-      }
-    }
-
-    websocketState.value = 'closed'
+    await socketClient.disconnect()
   }
 
   async function connectWebSocket(): Promise<void> {
     if (!sessionInfo.value) {
       throw new Error('请先创建课堂会话。')
     }
-    if (websocket?.readyState === WebSocket.OPEN) {
-      return
-    }
-    if (socketConnectPromise) {
-      return socketConnectPromise
-    }
 
     errorMessage.value = ''
-    websocketState.value = 'connecting'
-
-    const currentSocket = new WebSocket(
-      buildWebSocketUrl(sessionInfo.value.session_id, backendBaseUrl.value),
-    )
-    websocket = currentSocket
-
-    socketConnectPromise = new Promise<void>((resolve, reject) => {
-      let handshakeCompleted = false
-
-      currentSocket.onopen = () => {
-        handshakeCompleted = true
-        websocketState.value = 'open'
-        socketConnectPromise = null
-        resolve()
-      }
-
-      currentSocket.onmessage = (message) => {
-        if (typeof message.data !== 'string') {
-          return
-        }
-
-        try {
-          handleRealtimeEvent(JSON.parse(message.data) as RealtimeEvent)
-        } catch {
-          // 忽略后端发来的非 JSON 文本。
-        }
-      }
-
-      currentSocket.onerror = () => {
-        errorMessage.value = 'WebSocket 连接失败。'
-        if (!handshakeCompleted) {
-          websocketState.value = 'closed'
-          websocket = null
-          socketConnectPromise = null
-          reject(new Error('WebSocket 连接失败。'))
-        }
-      }
-
-      currentSocket.onclose = (event) => {
-        if (websocket === currentSocket) {
-          websocket = null
-        }
-        websocketState.value = 'closed'
-        socketConnectPromise = null
-        if (!handshakeCompleted) {
-          reject(new Error(event.reason || 'WebSocket 已关闭。'))
-        }
-      }
-    })
-
-    return socketConnectPromise
+    await socketClient.connect(sessionInfo.value.session_id, backendBaseUrl.value)
   }
 
   async function startRecording(): Promise<void> {
@@ -196,7 +135,7 @@ export function createRealtimeAudioActions(args: {
       saveLessonSnapshot('active')
 
       processorNode.onaudioprocess = (audioEvent: AudioProcessingEvent) => {
-        if (!recording.value || !websocket || websocket.readyState !== WebSocket.OPEN) {
+        if (!recording.value || !socketClient.isOpen) {
           return
         }
 
@@ -208,7 +147,7 @@ export function createRealtimeAudioActions(args: {
 
         audioFrameCount.value += 1
         try {
-          websocket.send(pcm.buffer.slice(0))
+          socketClient.sendAudio(pcm.buffer.slice(0))
         } catch (error) {
           errorMessage.value = error instanceof Error ? error.message : '发送音频数据失败。'
         }
@@ -295,39 +234,4 @@ export function createRealtimeAudioActions(args: {
     stopRecording,
     toggleRecording,
   }
-}
-
-function downsampleBuffer(
-  source: Float32Array,
-  sourceRate: number,
-  targetRate: number,
-): Float32Array {
-  if (targetRate <= 0 || sourceRate <= 0 || source.length === 0) {
-    return new Float32Array()
-  }
-  if (sourceRate === targetRate || sourceRate < targetRate) {
-    return Float32Array.from(source)
-  }
-
-  const ratio = sourceRate / targetRate
-  const length = Math.max(1, Math.round(source.length / ratio))
-  const result = new Float32Array(length)
-
-  let sourceOffset = 0
-  for (let index = 0; index < length; index += 1) {
-    const nextOffset = Math.min(source.length, Math.round((index + 1) * ratio))
-    const start = Math.min(source.length - 1, Math.round(sourceOffset))
-    let accumulator = 0
-    let count = 0
-
-    for (let position = start; position < nextOffset; position += 1) {
-      accumulator += source[position] ?? 0
-      count += 1
-    }
-
-    result[index] = count > 0 ? accumulator / count : (source[start] ?? 0)
-    sourceOffset = nextOffset
-  }
-
-  return result
 }

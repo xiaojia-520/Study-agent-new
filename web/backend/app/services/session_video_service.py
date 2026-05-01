@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from config.settings import settings
+from src.application.rag.ingestion_service import KnowledgeIngestionService
 from src.application.rag.runtime import get_shared_rag_runtime
 from src.application.video.subtitle_service import VideoSubtitleService
-from src.core.knowledge.document_models import TranscriptRecord
-from src.core.knowledge.query_filters import MetadataFilterClause, MetadataFilterSpec
 from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.domain.video import LessonVideo
+from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.transcript_service import TranscriptService, transcript_service
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ class SessionVideoService:
         transcript_writer: TranscriptService | None = None,
         rag_runtime_factory=get_shared_rag_runtime,
         rag_indexing_enabled: bool = settings.RAG_REALTIME_INDEXING_ENABLED,
+        ingestion_service: KnowledgeIngestionService | None = None,
     ) -> None:
         self.store = store
         self.subtitle_service = subtitle_service or VideoSubtitleService()
@@ -54,6 +55,11 @@ class SessionVideoService:
         )
         self.rag_runtime_factory = rag_runtime_factory
         self.rag_indexing_enabled = rag_indexing_enabled
+        self.ingestion_service = ingestion_service or KnowledgeIngestionService(
+            transcript_writer=self.transcript_writer,
+            runtime_factory=rag_runtime_factory,
+            rag_indexing_enabled=rag_indexing_enabled,
+        )
 
     def init_schema(self) -> None:
         self.store.init_schema()
@@ -247,6 +253,52 @@ class SessionVideoService:
         )
         if final_record_count > 0:
             self._rebuild_session_rag_index(video.session_id)
+            session_transcript_refine_service.enqueue_session(video.session_id)
+
+    def refresh_refined_video_subtitles(self, session_id: str) -> None:
+        normalized_session_id = (session_id or "").strip()
+        if not normalized_session_id:
+            return
+
+        list_records = getattr(self.transcript_writer, "list_session_transcripts", None)
+        if not callable(list_records):
+            return
+
+        transcript_items = list_records(None, normalized_session_id, prefer_final=True)
+        if not transcript_items:
+            return
+
+        refined_records = session_transcript_refine_service.list_session_refined_transcripts(normalized_session_id)
+        refined_by_source = {record.source_record_id: record.refined_text for record in refined_records}
+        if not refined_by_source:
+            return
+
+        videos = self.list_session_videos(normalized_session_id)
+        updated = False
+        now = int(time.time())
+        for video in videos:
+            segments = self._build_refined_segments_for_video(
+                video_id=video.video_id,
+                transcript_items=transcript_items,
+                refined_by_source=refined_by_source,
+            )
+            if not segments:
+                continue
+
+            self._update_video(
+                video.video_id,
+                text="".join(segment["text"] for segment in segments),
+                segment_count=len(segments),
+                segments_json=_encode_json(segments),
+                metadata={
+                    "subtitle_refined_at": now,
+                    "subtitle_refined_record_count": len(segments),
+                },
+            )
+            updated = True
+
+        if updated:
+            logger.info("Refreshed refined video subtitles for session %s", normalized_session_id)
 
     def _persist_final_transcript_records(
         self,
@@ -302,40 +354,49 @@ class SessionVideoService:
                     "recording_started_at": recording_started_at,
                 },
             }
-            self.transcript_writer.append_transcript_record(record)
+            self.ingestion_service.persist_record(record)
             records.append(record)
 
         return len(records)
+
+    def _build_refined_segments_for_video(
+        self,
+        *,
+        video_id: str,
+        transcript_items: list[dict[str, Any]],
+        refined_by_source: dict[int, str],
+    ) -> list[dict[str, Any]]:
+        segments: list[dict[str, Any]] = []
+        for item in transcript_items:
+            metadata = item.get("metadata")
+            if not isinstance(metadata, Mapping):
+                metadata = {}
+            if str(metadata.get("video_id") or "") != video_id:
+                continue
+
+            source_record_id = _safe_int(item.get("id"), 0)
+            text = _normalize_text(refined_by_source.get(source_record_id) or item.get("clean_text") or item.get("text"))
+            if not text:
+                continue
+
+            start_ms = max(0, _safe_int(item.get("start_ms"), 0))
+            end_ms = max(start_ms + 200, _safe_int(item.get("end_ms"), start_ms + 200))
+            segments.append(
+                {
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "text": text,
+                }
+            )
+        return segments
 
     def _rebuild_session_rag_index(self, session_id: str) -> None:
         if not self.rag_indexing_enabled:
             return
 
-        list_records = getattr(self.transcript_writer, "list_session_transcripts", None)
-        if not callable(list_records):
-            return
-
         try:
-            payloads = list_records(None, session_id, prefer_final=True)
-            records = [
-                TranscriptRecord.from_dict(payload)
-                for payload in payloads
-                if _normalize_text(payload.get("clean_text") or payload.get("text"))
-            ]
-            if not records:
-                return
-
-            runtime = self.rag_runtime_factory()
-            runtime.index_store.delete_by_metadata(
-                MetadataFilterSpec(
-                    clauses=(MetadataFilterClause("session_id", session_id),),
-                )
-            )
-            runtime.indexing_service.index_records(
-                records,
-                embed_model=runtime.embed_model,
-            )
-            logger.info("Rebuilt final RAG index for session %s with %s records", session_id, len(records))
+            self.ingestion_service.rebuild_session_index(session_id)
+            logger.info("Rebuilt final RAG index for session %s", session_id)
         except Exception as exc:
             logger.exception("Failed to rebuild final RAG index for session %s: %s", session_id, exc)
 

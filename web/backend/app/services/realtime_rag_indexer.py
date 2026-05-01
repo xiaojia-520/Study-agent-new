@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from config.settings import settings
 from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from src.core.knowledge.document_models import TranscriptRecord
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 
 logger = logging.getLogger(__name__)
 

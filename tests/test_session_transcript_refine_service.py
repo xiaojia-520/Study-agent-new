@@ -45,7 +45,11 @@ class SessionTranscriptRefineServiceTests(unittest.TestCase):
                     llm=llm,
                 ),
                 runtime_closer=lambda: None,
-                session_getter=lambda _: None,
+                session_getter=lambda _: SimpleNamespace(
+                    course_id="math-course",
+                    lesson_id="lesson-1",
+                    subject="math",
+                ),
                 transcript_loader=transcript_service.list_session_transcripts,
             )
 
@@ -56,6 +60,8 @@ class SessionTranscriptRefineServiceTests(unittest.TestCase):
             self.assertEqual(records[0].refined_text, "Today we talk about limits.")
             self.assertEqual(records[0].model_name, "deepseek-chat")
             self.assertEqual(records[0].metadata["prompt_version"], "transcript-refine-v1")
+            self.assertIn("Subject: math", llm.prompts[0])
+            self.assertIn("Keep filler words", llm.prompts[0])
             self.assertIn("Input records JSON:", llm.prompts[0])
 
             lesson_records = service.list_lesson_refined_transcripts(
@@ -98,6 +104,73 @@ class SessionTranscriptRefineServiceTests(unittest.TestCase):
 
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].refined_text, "Refined text.")
+
+    def test_refine_session_replaces_previous_refined_records_when_final_transcript_arrives(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteStore(Path(temp_dir) / "transcripts.sqlite3")
+            transcript_service = TranscriptService(store=store)
+            transcript_service.init_schema()
+            realtime_id = self._append_record(transcript_service, chunk_id=1, text="Raw text")
+            final_id = transcript_service.append_transcript_record(
+                {
+                    "session_id": "session-a",
+                    "storage_id": "store-a-final",
+                    "course_id": "math-course",
+                    "lesson_id": "lesson-1",
+                    "chunk_id": 2,
+                    "subject": "math",
+                    "source_type": "video",
+                    "text": "Final text",
+                    "clean_text": "Final text",
+                    "created_at": 120,
+                    "metadata": {
+                        "parser": "offline_funasr",
+                        "transcript_role": "final",
+                    },
+                }
+            )
+            llm = FakeLLM(
+                [
+                    f"""
+                    [
+                      {{"source_record_id": {final_id}, "refined_text": "Final text."}}
+                    ]
+                    """
+                ]
+            )
+            service = SessionTranscriptRefineService(
+                store=store,
+                runtime_factory=lambda: SimpleNamespace(
+                    config=SimpleNamespace(llm_model="deepseek-chat"),
+                    llm=llm,
+                ),
+                runtime_closer=lambda: None,
+                session_getter=lambda _: SimpleNamespace(
+                    course_id="math-course",
+                    lesson_id="lesson-1",
+                    subject="math",
+                ),
+                transcript_loader=transcript_service.list_session_transcripts,
+            )
+            service.append_refined_transcript_record(
+                source_record={
+                    "id": realtime_id,
+                    "session_id": "session-a",
+                    "course_id": "math-course",
+                    "lesson_id": "lesson-1",
+                    "chunk_id": 1,
+                    "text": "Raw text",
+                    "clean_text": "Raw text",
+                    "created_at": 100,
+                },
+                refined_text="Draft text.",
+            )
+
+            records = service.refine_session("session-a")
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].source_record_id, final_id)
+            self.assertEqual(records[0].refined_text, "Final text.")
 
     @staticmethod
     def _append_record(transcript_service: TranscriptService, *, chunk_id: int, text: str) -> int:

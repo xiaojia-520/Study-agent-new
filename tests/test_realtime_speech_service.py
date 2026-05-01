@@ -2,7 +2,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.realtime_speech_service import RealtimeSpeechService
 
 
@@ -15,7 +15,7 @@ class FakeSender:
 
 
 class RealtimeSpeechServiceTests(unittest.TestCase):
-    def test_handle_final_transcript_persists_and_enqueues_rag_record(self) -> None:
+    def test_handle_final_transcript_delegates_to_knowledge_ingestion(self) -> None:
         service = RealtimeSpeechService()
         sender = FakeSender()
         session = RealtimeSession(
@@ -42,18 +42,14 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         with (
             patch("web.backend.app.services.realtime_speech_service.session_manager.get_session", return_value=session),
             patch(
-                "web.backend.app.services.realtime_speech_service.transcript_service.append_realtime_transcript",
+                "web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.append_realtime_transcript",
                 return_value=persisted_record,
             ) as append_mock,
-            patch(
-                "web.backend.app.services.realtime_speech_service.realtime_rag_indexer.append_record"
-            ) as enqueue_mock,
         ):
             service._handle_final_transcript("session-final", sender, "final text")
 
         self.assertEqual(sender.calls, [("final_transcript", "final text", True)])
         append_mock.assert_called_once_with(session, "final text")
-        enqueue_mock.assert_called_once_with(session, persisted_record)
 
     def test_shutdown_session_flushes_rag_tail(self) -> None:
         service = RealtimeSpeechService()
@@ -75,8 +71,8 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         )
 
         with (
-            patch("web.backend.app.services.realtime_speech_service.realtime_rag_indexer.flush_session") as flush_mock,
-            patch("web.backend.app.services.realtime_speech_service.transcript_service.release_session") as release_mock,
+            patch("web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.flush_session") as flush_mock,
+            patch("web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.release_session") as release_mock,
             patch(
                 "web.backend.app.services.realtime_speech_service.session_manager.mark_disconnected",
                 return_value=session,
@@ -85,17 +81,12 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
                 "web.backend.app.services.realtime_speech_service.session_manager.next_event_seq",
                 return_value=1,
             ),
-            patch(
-                "web.backend.app.services.realtime_speech_service.session_transcript_refine_service.enqueue_session",
-                return_value=True,
-            ) as refine_mock,
         ):
             payload = self._run_async(service.shutdown_session("session-stop", pipeline))
 
         self.assertTrue(pipeline.stopped)
         flush_mock.assert_called_once_with("session-stop")
         release_mock.assert_called_once_with("session-stop")
-        refine_mock.assert_called_once_with("session-stop")
         self.assertEqual(payload["type"], "session_stopped")
 
     @staticmethod

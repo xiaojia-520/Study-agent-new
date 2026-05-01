@@ -10,8 +10,8 @@ from config.prompts import (
 )
 from src.application.rag.runtime import close_shared_rag_runtime, get_shared_rag_runtime
 from web.backend.app.domain.lesson_quiz import LessonQuiz, QuizQuestion
-from web.backend.app.domain.session import RealtimeSession
-from web.backend.app.services.session_manager import session_manager
+from src.application.runtime.session_manager import session_manager
+from src.domain.session import RealtimeSession
 from web.backend.app.services.transcript_service import transcript_service
 
 

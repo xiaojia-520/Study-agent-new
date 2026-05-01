@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
-from web.backend.app.domain.session import RealtimeSession
+from src.domain.session import RealtimeSession
 from web.backend.app.services.lesson_asset_service import (
     LessonAssetService,
     MineruExtractResult,

@@ -21,6 +21,7 @@ const {
   currentCourseId,
   currentLessonId,
   currentSessionId,
+  microphone,
   recording,
   websocketState,
 } = storeToRefs(sessionStore)
@@ -408,6 +409,24 @@ function buildVideoConstraints(): MediaTrackConstraints {
   }
 }
 
+function buildAudioConstraints(): boolean | MediaTrackConstraints {
+  if (microphone.value && microphone.value !== 'default') {
+    return {
+      deviceId: { exact: microphone.value },
+      channelCount: 1,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    }
+  }
+  return {
+    channelCount: 1,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  }
+}
+
 function stopCameraStream(): void {
   if (videoRef.value) {
     videoRef.value.pause()
@@ -525,11 +544,7 @@ async function startVideoRecording(): Promise<void> {
   try {
     stopCameraStream()
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
+      audio: buildAudioConstraints(),
       video: buildVideoConstraints(),
     })
 
