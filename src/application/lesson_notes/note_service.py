@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from config.prompts import build_lesson_note_chunk_prompt, build_lesson_note_merge_prompt
+from config.prompts import build_lesson_note_markdown_prompt
 from src.domain.lesson_note import LessonNote, LessonNoteStatus
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class LessonNoteService:
         runtime_factory,
         runtime_closer=None,
         chunk_char_limit: int = 6000,
-        max_items_default: int = 8,
+        max_items_default: int = 12,
     ) -> None:
         self.repository = repository
         self.transcript_loader = transcript_loader
@@ -89,7 +90,8 @@ class LessonNoteService:
         course_id = _required_text(course_id, "course_id")
         lesson_id = _required_text(lesson_id, "lesson_id")
         transcript_items = self._load_lesson_transcripts(course_id=course_id, lesson_id=lesson_id)
-        source_hash = self._source_hash(transcript_items)
+        speech_items = self._filter_speech_transcripts(transcript_items)
+        source_hash = self._source_hash(speech_items)
 
         latest = self.repository.get_latest_note(course_id=course_id, lesson_id=lesson_id)
         if latest is not None and latest.source_hash == source_hash and not force:
@@ -103,7 +105,7 @@ class LessonNoteService:
             lesson_id=lesson_id,
             session_id=_optional_text(session_id),
             status=LessonNoteStatus.GENERATING,
-            source_record_count=len(transcript_items),
+            source_record_count=len(speech_items),
             source_hash=source_hash,
             metadata={
                 "focus": _optional_text(focus),
@@ -193,7 +195,8 @@ class LessonNoteService:
             raise KeyError(note_id)
 
         transcript_items = self._load_lesson_transcripts(course_id=note.course_id, lesson_id=note.lesson_id)
-        source_hash = self._source_hash(transcript_items)
+        speech_items = self._filter_speech_transcripts(transcript_items)
+        source_hash = self._source_hash(speech_items)
         resolved_max_items = max(
             1,
             int(max_items or note.metadata.get("max_items") or self.max_items_default),
@@ -205,60 +208,46 @@ class LessonNoteService:
         if llm is None:
             raise ValueError("LLM is not enabled. Set RAG_ENABLE_LLM=true and configure a provider first.")
 
-        chunks = self._build_context_chunks(transcript_items)
-        chunk_payloads: list[dict[str, Any]] = []
-        for index, chunk in enumerate(chunks, start=1):
-            prompt = build_lesson_note_chunk_prompt(
-                lesson_context_chunk=chunk,
-                chunk_index=index,
-                chunk_count=len(chunks),
-                max_items=resolved_max_items,
-                focus=resolved_focus,
-            )
-            response_text = self._complete_text(llm, prompt)
-            chunk_payloads.append(
-                self._normalize_note_payload(
-                    self._parse_json_payload(response_text),
-                    fallback_overview=response_text,
-                    max_items=resolved_max_items,
-                )
-            )
-
-        if len(chunk_payloads) == 1:
-            final_payload = chunk_payloads[0]
-        else:
-            merge_prompt = build_lesson_note_merge_prompt(
-                chunk_notes_json=json.dumps(chunk_payloads, ensure_ascii=False, indent=2),
-                max_items=resolved_max_items,
-                focus=resolved_focus,
-            )
-            merged_text = self._complete_text(llm, merge_prompt)
-            final_payload = self._normalize_note_payload(
-                self._parse_json_payload(merged_text),
-                fallback_overview=merged_text,
-                max_items=resolved_max_items,
-            )
-
-        markdown = self._build_markdown(final_payload)
+        transcript_text = self._build_speech_transcript_text(speech_items)
+        prompt = build_lesson_note_markdown_prompt(
+            course_id=note.course_id,
+            lesson_id=note.lesson_id,
+            transcript_text=transcript_text,
+            focus=resolved_focus,
+        )
+        response_text = self._complete_text(llm, prompt)
+        markdown = _strip_markdown_code_fence(response_text)
+        title, summary = _extract_markdown_title_summary(markdown)
+        final_payload = {
+            "title": title,
+            "overview": summary,
+            "key_points": [],
+            "concepts": [],
+            "examples": [],
+            "timeline": [],
+            "review_items": [],
+            "questions": [],
+        }
         metadata = {
             "focus": resolved_focus,
             "max_items": resolved_max_items,
-            "record_count": len(transcript_items),
-            "chunk_count": len(chunks),
-            "transcript_char_count": sum(len(chunk) for chunk in chunks),
-            "source_type_counts": _source_type_counts(transcript_items),
+            "record_count": len(speech_items),
+            "chunk_count": 1,
+            "transcript_char_count": len(transcript_text),
+            "source_type_counts": _source_type_counts(speech_items),
             "llm_used": True,
-            "output_format": "structured_json_markdown",
+            "output_format": "markdown_direct_speech_only",
+            "generation_mode": "single_pass_markdown",
             "generated_at": int(time.time()),
         }
         self.repository.update_note(
             note.note_id,
             status=LessonNoteStatus.DONE,
-            title=final_payload["title"],
-            summary=final_payload["overview"],
+            title=title,
+            summary=summary,
             markdown=markdown,
             note=final_payload,
-            source_record_count=len(transcript_items),
+            source_record_count=len(speech_items),
             source_hash=source_hash,
             model_name=self._resolve_model_name(llm),
             error_message=None,
@@ -283,30 +272,36 @@ class LessonNoteService:
             raise ValueError("No usable lesson context was found for note generation.")
         return transcript_items
 
-    def _build_context_chunks(self, transcript_items: Sequence[Mapping[str, Any]]) -> list[str]:
-        chunks: list[str] = []
-        current_lines: list[str] = []
-        current_size = 0
-
+    def _filter_speech_transcripts(self, transcript_items: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+        speech_items: list[Mapping[str, Any]] = []
         for item in transcript_items:
             text = _clean_text(item)
             if not text:
                 continue
-            line = _format_context_line(item, text)
-            projected = current_size + len(line) + (1 if current_lines else 0)
-            if current_lines and projected > self.chunk_char_limit:
-                chunks.append("\n".join(current_lines))
-                current_lines = [line]
-                current_size = len(line)
+            source_type = (str(item.get("source_type") or "").strip().lower()) or "unknown"
+            if source_type not in {"realtime", "video"}:
                 continue
-            current_lines.append(line)
-            current_size = projected
+            speech_items.append(item)
 
-        if current_lines:
-            chunks.append("\n".join(current_lines))
-        if not chunks:
-            raise ValueError("No usable lesson context was found for note generation.")
-        return chunks
+        if not speech_items:
+            raise ValueError("No usable speech transcript was found for note generation.")
+        return list(speech_items)
+
+    def _build_speech_transcript_text(self, transcript_items: Sequence[Mapping[str, Any]]) -> str:
+        lines: list[str] = []
+        for item in transcript_items:
+            text = _clean_text(item)
+            if not text:
+                continue
+            time_label = _record_time_label(item)
+            if time_label:
+                lines.append(f"[{time_label}] {text}")
+            else:
+                chunk_id = item.get("chunk_id") or "-"
+                lines.append(f"[chunk {chunk_id}] {text}")
+        if not lines:
+            raise ValueError("No usable speech transcript was found for note generation.")
+        return "\n".join(lines)
 
     def _source_hash(self, transcript_items: Sequence[Mapping[str, Any]]) -> str:
         payload = []
@@ -501,6 +496,74 @@ def _derive_title(overview: str) -> str:
     if len(text) <= 40:
         return text
     return text[:40].rstrip() + "..."
+
+
+def _strip_markdown_code_fence(text: str) -> str:
+    stripped = str(text or "").strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) < 3:
+        return stripped
+    first_line = lines[0].strip().lower()
+    if first_line in {"```", "```md", "```markdown"} and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _extract_markdown_title_summary(markdown: str) -> tuple[str, str]:
+    stripped = str(markdown or "").strip()
+    if not stripped:
+        return "课后笔记", ""
+
+    lines = [line.rstrip() for line in stripped.splitlines()]
+
+    title = ""
+    for line in lines:
+        candidate = line.strip()
+        if candidate.startswith("#"):
+            title = candidate.lstrip("#").strip()
+            break
+
+    if not title:
+        for line in lines:
+            candidate = line.strip()
+            if candidate and not candidate.startswith(("```", "-", "*", ">")):
+                title = re.sub(r"^[\d.\-+\s]+", "", candidate).strip() or candidate
+                break
+
+    paragraphs: list[str] = []
+    current: list[str] = []
+    inside_code_block = False
+    for line in lines:
+        raw = line.strip()
+        if raw.startswith("```"):
+            inside_code_block = not inside_code_block
+            continue
+        if inside_code_block:
+            continue
+        if raw.startswith("#"):
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        if not raw:
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        if raw.startswith(("-", "*", ">")):
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        current.append(raw)
+
+    if current:
+        paragraphs.append(" ".join(current).strip())
+
+    summary = next((item for item in paragraphs if item), "")
+    return _optional_text(title) or "课后笔记", summary
 
 
 def _normalize_text_list(value: object, *, limit: int) -> list[str]:

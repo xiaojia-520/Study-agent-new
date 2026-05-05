@@ -31,6 +31,10 @@ ENV/
 
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 .cache/
 .coverage
 htmlcov/
@@ -44,6 +48,7 @@ dist-ssr/
 coverage/
 *.tsbuildinfo
 .eslintcache
+web/frontend/.tmp/
 
 npm-debug.log*
 yarn-debug.log*
@@ -68,6 +73,9 @@ logs/
 output.srt
 data/transcripts/
 data/assets/
+data/vedio/
+data/videos/
+data/video_subtitles/
 data/mineru_results/
 data/qdrant/
 data/*.sqlite3
@@ -76,6 +84,7 @@ tests/uploads/
 tmp_wav/
 tmp_qdrant_test/
 tmp_qdrant_eval*/
+tmp_qdrant_eval_llm/
 uploads/
 
 ############################

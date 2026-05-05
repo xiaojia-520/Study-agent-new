@@ -23,6 +23,7 @@ class ToolResult:
 @dataclass(frozen=True)
 class CopilotStep:
     action: str
+    thought: str | None = None
     tool_name: str | None = None
     arguments: Mapping[str, Any] | None = None
     tool_ok: bool | None = None

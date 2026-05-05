@@ -204,7 +204,7 @@ def build_lesson_summary_merge_prompt(
 
 LESSON_NOTE_JSON_SCHEMA = """{
   "title": "short lesson note title",
-  "overview": "2-4 sentence overview",
+  "overview": "3-6 sentence overview that captures the lesson arc, emphasis, and main conclusions",
   "key_points": ["key point 1", "key point 2"],
   "concepts": [
     {"term": "term", "explanation": "short explanation"}
@@ -223,9 +223,27 @@ Rules:
 - Use only information supported by the lesson context.
 - The lesson context may include speech transcript, video subtitles, document text, PPT OCR, and blackboard VLM text.
 - Preserve important concepts, examples, and teacher emphasis.
+- Prefer completeness and clarity over aggressive compression.
+- Do not flatten dense content into a few generic bullets when the source contains meaningful distinctions, conditions, or examples.
 - Timeline items should only be included when the context contains enough timing information.
 - Prefer the same language as the lesson context. Default to Simplified Chinese when unclear.
 - Return valid JSON only. Do not wrap it in markdown fences.
+"""
+
+
+LESSON_NOTE_MARKDOWN_SYSTEM_PROMPT = """你是一个严谨的课程学习助手。
+
+你的任务是：基于一门课程的语音识别文字，整理出尽可能全面的知识点笔记。
+
+要求：
+- 只能依据我提供的语音识别文字总结，不能补充 OCR、VLM、PPT、外部知识或你自己的猜测。
+- 输出要全面，优先保留知识点之间的区别、条件、推导关系、例子、老师强调点，不要过度压缩。
+- 如果识别文字里有明显错字、歧义、残缺句，或者某个知识点你无法确认，请明确写出“此处可能识别有误”或“此处内容存疑”，不要瞎写。
+- 直接输出 Markdown 内容，不要输出 JSON，不要输出额外解释。
+- 如果有公式：
+  - 行内公式用 `$公式$`
+  - 单独一行展示的公式用 `$$公式$$`
+- 尽量按适合复习的结构组织内容，例如：主题、知识点、公式、例题/说明、易错点、存疑点。
 """
 
 
@@ -243,7 +261,9 @@ def build_lesson_note_chunk_prompt(
             LESSON_NOTE_SYSTEM_PROMPT.strip(),
             f"Lesson context chunk: {chunk_index}/{chunk_count}",
             focus_line,
-            f"Return at most {max_items} key points, concepts, examples, timeline items, review items, and questions.",
+            f"Treat this chunk as a local draft. Aim for around {max_items} items per list for this chunk-level note.",
+            "Do not over-compress. Keep concrete concepts, examples, caveats, and teacher emphasis when they matter for studying.",
+            "If the chunk is information-dense, prefer preserving source-supported details over forcing a short outline.",
             "JSON schema:",
             LESSON_NOTE_JSON_SCHEMA,
             "Lesson context:",
@@ -265,10 +285,35 @@ def build_lesson_note_merge_prompt(
             focus_line,
             f"Merge the chunk-level notes into one final after-class note with at most {max_items} items per list.",
             "Deduplicate overlapping ideas, keep source-supported details, and make the final note coherent.",
+            "When multiple chunk notes mention related ideas, merge them thoughtfully instead of dropping nuance.",
+            "Preserve concrete concepts, examples, and teacher emphasis inside each item instead of reducing them to generic labels.",
             "JSON schema:",
             LESSON_NOTE_JSON_SCHEMA,
             "Chunk notes JSON:",
             chunk_notes_json.strip(),
+        ]
+    )
+
+
+def build_lesson_note_markdown_prompt(
+    *,
+    course_id: str,
+    lesson_id: str,
+    transcript_text: str,
+    focus: str | None = None,
+) -> str:
+    focus_line = f"补充关注点：{focus.strip()}" if focus and focus.strip() else "补充关注点：无"
+    return "\n\n".join(
+        [
+            LESSON_NOTE_MARKDOWN_SYSTEM_PROMPT.strip(),
+            f"课程：{course_id.strip()}",
+            f"课时：{lesson_id.strip()}",
+            focus_line,
+            "请按下面这个意思来做：",
+            "这是这节课的语音识别文字，我发给你，然后你给我总结成知识点笔记，要全面。",
+            "如果有文字错误或者一些知识点你不确定，你要明确告诉我，不能瞎写。",
+            "识别文字如下：",
+            transcript_text.strip(),
         ]
     )
 
@@ -349,12 +394,13 @@ TRANSCRIPT_REFINE_JSON_SCHEMA = """[
 TRANSCRIPT_REFINE_SYSTEM_PROMPT = """You are an ASR transcript editor for a study app.
 
 Rules:
-- Use only the provided transcript text.
 - Fix obvious ASR recognition errors, missing punctuation, spacing, and broken sentences.
-- Keep filler words, discourse markers, hesitations, and casual spoken connectors unless they are clearly hallucinated or duplicated noise.
-- Keep the original meaning, order, speaker intent, and technical terms.
+- Keep filler words, discourse markers, hesitations, and casual spoken connectors unless they are clearly hallucinated, duplicated noise, or significantly deviate from the classroom topic or instructional continuity.
+- Preserve the original meaning, order, speaker intent, and technical terms unless the content clearly deviates from the classroom subject or the continuity of the lesson.
 - Do not summarize, answer questions, add explanations, or introduce new facts.
 - Preserve one output item for each input record.
+- Use the original source_record_id values exactly as provided.
+- Return exactly a JSON array. Every item must contain source_record_id and refined_text.
 - Prefer the same language as the transcript. Default to Simplified Chinese when unclear.
 - Return valid JSON only. Do not wrap it in markdown fences.
 """

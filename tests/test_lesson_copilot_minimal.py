@@ -48,8 +48,8 @@ class LessonCopilotMinimalTests(unittest.TestCase):
         registry = build_tools(note_service, "web-course", "lesson-1")
         llm = FakeLLM(
             [
-                '{"action":"tool","tool_name":"get_lesson_note","arguments":{}}',
-                '{"action":"final","final_answer":"This lesson already has a note: Existing lesson note."}',
+                '{"action":"tool","thought":"Start with the existing note before generating anything new.","tool_name":"get_lesson_note","arguments":{}}',
+                '{"action":"final","thought":"The existing note is enough to answer the request.","final_answer":"This lesson already has a note: Existing lesson note."}',
             ]
         )
         agent = LessonCopilotAgent(llm, Executor(registry))
@@ -61,6 +61,7 @@ class LessonCopilotMinimalTests(unittest.TestCase):
 
         self.assertEqual(result.answer, "This lesson already has a note: Existing lesson note.")
         self.assertEqual(result.metadata["stopped_by"], "final")
+        self.assertEqual(result.steps[0].thought, "Start with the existing note before generating anything new.")
         self.assertEqual(result.steps[0].tool_name, "get_lesson_note")
 
     def test_agent_generates_note_when_missing(self) -> None:

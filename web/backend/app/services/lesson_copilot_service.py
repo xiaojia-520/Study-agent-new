@@ -48,6 +48,7 @@ class LessonCopilotService:
 def lesson_copilot_step_to_dict(step: CopilotStep) -> dict[str, Any]:
     return {
         "action": step.action,
+        "thought": step.thought,
         "tool_name": step.tool_name,
         "arguments": dict(step.arguments or {}),
         "tool_ok": step.tool_ok,

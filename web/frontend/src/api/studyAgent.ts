@@ -1,5 +1,6 @@
 import type {
   CreateSessionPayload,
+  DeleteLessonHistoryResponse,
   LessonCopilotPayload,
   LessonCopilotResponse,
   GenerateLessonNotePayload,
@@ -299,6 +300,25 @@ export function fetchLessonHistory(limit = 50, baseUrl = defaultBackendBaseUrl) 
       method: 'GET',
     },
     '获取历史课程失败',
+    baseUrl,
+  )
+}
+
+export function deleteLessonHistory(
+  courseId: string,
+  lessonId: string,
+  baseUrl = defaultBackendBaseUrl,
+) {
+  const params = new URLSearchParams({
+    course_id: courseId,
+    lesson_id: lessonId,
+  })
+  return requestJson<DeleteLessonHistoryResponse>(
+    `/sessions/history/lesson?${params.toString()}`,
+    {
+      method: 'DELETE',
+    },
+    '删除历史课程失败',
     baseUrl,
   )
 }

@@ -11,7 +11,12 @@ import {
 } from '../api/studyAgent'
 import SideBar from '../components/history/SideBar.vue'
 import { useSessionStore } from '../stores/session'
-import type { LessonCopilotStepItem, LessonHistoryItem, LessonNoteItem } from '../types/study'
+import type {
+  LessonCopilotStepItem,
+  LessonCopilotTimelineItem,
+  LessonHistoryItem,
+  LessonNoteItem,
+} from '../types/study'
 
 const sessionStore = useSessionStore()
 const { backendBaseUrl } = storeToRefs(sessionStore)
@@ -21,10 +26,10 @@ const note = ref<LessonNoteItem | null>(null)
 const loadingLatest = ref(false)
 const generating = ref(false)
 const focusText = ref('')
-const maxItems = ref(8)
 const statusMessage = ref('')
 const errorMessage = ref('')
 const copilotMessage = ref('帮我复习这节课，先看有没有已有笔记，没有就生成，再告诉我这节课最值得复习的重点。')
+const copilotSubmittedMessage = ref('')
 const copilotAnswer = ref('')
 const copilotError = ref('')
 const copilotLoading = ref(false)
@@ -48,6 +53,70 @@ const canRunCopilot = computed(
     !copilotLoading.value,
 )
 const canExportMarkdown = computed(() => Boolean(note.value?.markdown?.trim()) && note.value?.status === 'done')
+const copilotTimeline = computed<LessonCopilotTimelineItem[]>(() => {
+  const items: LessonCopilotTimelineItem[] = []
+  const submitted = copilotSubmittedMessage.value.trim()
+  if (submitted) {
+    items.push({
+      kind: 'user',
+      key: `user-${submitted}`,
+      text: submitted,
+    })
+  }
+
+  copilotSteps.value.forEach((step, index) => {
+    const thought = step.thought?.trim()
+    if (thought) {
+      items.push({
+        kind: 'thought',
+        key: `thought-${index}`,
+        text: thought,
+        step,
+      })
+    }
+
+    if (step.action === 'tool') {
+      items.push({
+        kind: 'tool',
+        key: `tool-${index}-${step.tool_name || 'unknown'}`,
+        step,
+      })
+      return
+    }
+
+    if (step.action === 'final') {
+      const answer = step.final_answer?.trim() || copilotAnswer.value.trim()
+      if (answer) {
+        items.push({
+          kind: 'final',
+          key: `final-${index}`,
+          text: answer,
+          step,
+        })
+      }
+      return
+    }
+
+    if (step.error?.trim()) {
+      items.push({
+        kind: 'error',
+        key: `error-${index}`,
+        text: step.error.trim(),
+        step,
+      })
+    }
+  })
+
+  if (!copilotSteps.value.length && copilotAnswer.value.trim()) {
+    items.push({
+      kind: 'final',
+      key: 'final-answer-only',
+      text: copilotAnswer.value.trim(),
+    })
+  }
+
+  return items
+})
 const noteStatusLabel = computed(() => {
   if (!note.value) {
     return '暂无笔记'
@@ -135,7 +204,6 @@ async function requestGenerate(force = false): Promise<void> {
       selectedLessonId.value,
       {
         focus: focusText.value.trim() || undefined,
-        max_items: maxItems.value,
         force,
       },
       backendBaseUrl.value,
@@ -186,6 +254,7 @@ function updateStatusFromNote(item: LessonNoteItem): void {
 }
 
 function resetCopilotState(): void {
+  copilotSubmittedMessage.value = ''
   copilotAnswer.value = ''
   copilotError.value = ''
   copilotLoading.value = false
@@ -201,6 +270,7 @@ async function askCopilot(): Promise<void> {
   copilotError.value = ''
   copilotAnswer.value = ''
   copilotSteps.value = []
+  copilotSubmittedMessage.value = copilotMessage.value.trim()
 
   try {
     const response = await runLessonCopilot(
@@ -221,6 +291,40 @@ async function askCopilot(): Promise<void> {
     copilotError.value = error instanceof Error ? error.message : 'Lesson copilot request failed.'
   } finally {
     copilotLoading.value = false
+  }
+}
+
+function formatCopilotStepLabel(step: LessonCopilotStepItem): string {
+  if (step.action === 'tool') {
+    return step.tool_name || 'tool'
+  }
+  if (step.action === 'final') {
+    return 'final'
+  }
+  return step.action || 'step'
+}
+
+function formatToolStatus(step: LessonCopilotStepItem): string {
+  if (step.tool_ok === true) {
+    return 'success'
+  }
+  if (step.tool_ok === false) {
+    return 'failed'
+  }
+  return 'pending'
+}
+
+function formatJson(value: unknown): string {
+  if (value == null) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
   }
 }
 
@@ -314,19 +418,12 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_140px_auto_auto]">
+              <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto]">
                 <input
                   v-model="focusText"
                   type="text"
                   placeholder="聚焦方向"
                   class="min-w-0 rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-2.5 text-sm outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
-                />
-                <input
-                  v-model.number="maxItems"
-                  type="number"
-                  min="3"
-                  max="16"
-                  class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-2.5 text-sm outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
                 />
                 <button
                   type="button"
@@ -409,41 +506,93 @@ onBeforeUnmount(() => {
                   {{ copilotError }}
                 </p>
 
-                <div
-                  v-if="copilotAnswer || copilotSteps.length"
-                  class="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"
-                >
-                  <section class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-4">
-                    <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--text-faint))]">
-                      Copilot Answer
-                    </p>
-                    <p class="mt-2 whitespace-pre-wrap text-sm leading-7 text-[rgb(var(--text-main))]">
-                      {{ copilotAnswer }}
-                    </p>
-                  </section>
+                <div v-if="copilotLoading || copilotTimeline.length" class="mt-4 rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-4">
+                  <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--text-faint))]">
+                    Copilot Timeline
+                  </p>
 
-                  <section class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-4">
-                    <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--text-faint))]">
-                      Copilot Steps
-                    </p>
-                    <ol class="mt-3 space-y-2 text-sm text-[rgb(var(--text-subtle))]">
-                      <li
-                        v-for="(step, index) in copilotSteps"
-                        :key="`${index}-${step.action}-${step.tool_name || 'final'}`"
-                        class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))] px-3 py-2"
-                      >
-                        <span class="font-semibold text-[rgb(var(--text-main))]">{{ index + 1 }}.</span>
-                        <span v-if="step.action === 'tool'">
-                          {{ step.tool_name }}<span v-if="step.tool_ok === false"> failed</span>
+                  <div class="mt-3 space-y-3">
+                    <article
+                      v-for="item in copilotTimeline"
+                      :key="item.key"
+                      class="rounded-[var(--radius-soft)] border px-4 py-3"
+                      :class="
+                        item.kind === 'user'
+                          ? 'ml-auto max-w-[88%] border-[rgba(var(--accent),0.16)] bg-[rgba(var(--accent),0.08)]'
+                          : item.kind === 'error'
+                            ? 'border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)]'
+                            : item.kind === 'final'
+                              ? 'border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-base))]'
+                              : 'border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-base))]'
+                      "
+                    >
+                      <div class="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                        <span v-if="item.kind === 'user'">User</span>
+                        <span v-else-if="item.kind === 'thought'">Thinking</span>
+                        <span v-else-if="item.kind === 'tool'">Tool Call</span>
+                        <span v-else-if="item.kind === 'final'">Final</span>
+                        <span v-else>Error</span>
+                        <span v-if="item.step && item.kind !== 'thought'">/</span>
+                        <span v-if="item.step && item.kind !== 'thought'">{{ formatCopilotStepLabel(item.step) }}</span>
+                        <span v-if="item.kind === 'tool' && item.step">/</span>
+                        <span
+                          v-if="item.kind === 'tool' && item.step"
+                          class="rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-[0.08em]"
+                          :class="
+                            formatToolStatus(item.step) === 'success'
+                              ? 'bg-[rgba(var(--accent),0.12)] text-[rgb(var(--accent))]'
+                              : 'bg-[rgba(var(--danger),0.12)] text-[rgb(var(--danger))]'
+                          "
+                        >
+                          {{ formatToolStatus(item.step) }}
                         </span>
-                        <span v-else-if="step.action === 'final'">final answer</span>
-                        <span v-else>{{ step.action }}</span>
-                        <p v-if="step.error" class="mt-1 text-xs text-[rgb(var(--danger))]">
-                          {{ step.error }}
+                      </div>
+
+                      <p
+                        v-if="item.text"
+                        class="mt-2 whitespace-pre-wrap text-sm leading-7"
+                        :class="item.kind === 'error' ? 'text-[rgb(var(--danger))]' : 'text-[rgb(var(--text-main))]'"
+                      >
+                        {{ item.text }}
+                      </p>
+
+                      <div v-if="item.kind === 'tool' && item.step" class="mt-3 space-y-2">
+                        <details
+                          v-if="item.step.arguments && Object.keys(item.step.arguments).length"
+                          class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] px-3 py-2"
+                        >
+                          <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                            Arguments
+                          </summary>
+                          <pre class="mt-2 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.arguments) }}</pre>
+                        </details>
+                        <details
+                          v-if="item.step.tool_result"
+                          class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] px-3 py-2"
+                        >
+                          <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                            Result
+                          </summary>
+                          <pre class="mt-2 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.tool_result) }}</pre>
+                        </details>
+                        <p v-if="item.step.error" class="text-xs text-[rgb(var(--danger))]">
+                          {{ item.step.error }}
                         </p>
-                      </li>
-                    </ol>
-                  </section>
+                      </div>
+                    </article>
+
+                    <article
+                      v-if="copilotLoading"
+                      class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-base))] px-4 py-3"
+                    >
+                      <div class="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
+                        <span>Thinking</span>
+                      </div>
+                      <p class="mt-2 text-sm leading-7 text-[rgb(var(--text-subtle))]">
+                        正在决定下一步操作并整理结果。
+                      </p>
+                    </article>
+                  </div>
                 </div>
               </div>
             </div>

@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     RAG_LLM_API_KEY: str = ""
     RAG_LLM_API_BASE: str = ""
     RAG_LLM_TEMPERATURE: float = 0.1
-    RAG_LLM_MAX_TOKENS: int | None = 512
+    RAG_LLM_MAX_TOKENS: int | None = 2048
     RAG_LLM_TIMEOUT: float = 60.0
 
     MINERU_API_TOKEN: str = ""

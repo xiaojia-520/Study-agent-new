@@ -347,6 +347,7 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId,
     dismissRefineStatusToast,
     errorMessage,
+    ensureSession,
     fetchCameras,
     fetchMicrophones,
     refreshSessionAssets,

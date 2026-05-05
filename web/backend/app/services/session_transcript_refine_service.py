@@ -46,6 +46,7 @@ class SessionTranscriptRefineService:
         session_getter=session_manager.get_session,
         transcript_loader=transcript_service.list_session_transcripts,
         batch_char_limit: int = 6000,
+        batch_record_limit: int = 20,
     ) -> None:
         self.store = store
         self.runtime_factory = runtime_factory or _build_runtime
@@ -53,9 +54,11 @@ class SessionTranscriptRefineService:
         self.session_getter = session_getter
         self.transcript_loader = transcript_loader
         self.batch_char_limit = max(1, int(batch_char_limit))
+        self.batch_record_limit = max(1, int(batch_record_limit))
         self._runtime = None
         self._lock = threading.RLock()
         self._running_sessions: set[str] = set()
+        self._queued_sessions: set[str] = set()
 
     def init_schema(self) -> None:
         self.store.init_schema()
@@ -67,6 +70,7 @@ class SessionTranscriptRefineService:
 
         with self._lock:
             if normalized_session_id in self._running_sessions:
+                self._queued_sessions.add(normalized_session_id)
                 return False
             self._running_sessions.add(normalized_session_id)
 
@@ -86,19 +90,40 @@ class SessionTranscriptRefineService:
 
         session = self.session_getter(normalized_session_id)
         transcript_items = self.transcript_loader(session, normalized_session_id)
-        pending_records = self._filter_pending_transcript_records(transcript_items)
-        if not pending_records:
+        candidate_records = self._collect_transcript_candidates(transcript_items)
+        if not candidate_records:
             return self.list_session_refined_transcripts(normalized_session_id)
 
-        self.delete_session_refined_transcripts(normalized_session_id)
+        current_source_ids = [
+            source_record_id
+            for item in candidate_records
+            if (source_record_id := self._record_id(item)) is not None
+        ]
+        existing_refined_records = self.list_session_refined_transcripts(normalized_session_id)
+        existing_session_source_ids = {item.source_record_id for item in existing_refined_records}
+        requires_full_refresh = bool(existing_session_source_ids - set(current_source_ids))
+
         runtime = self._get_runtime()
         llm = getattr(runtime, "llm", None)
         if llm is None:
             logger.info("Skip transcript refinement because RAG LLM is not enabled")
             return self.list_session_refined_transcripts(normalized_session_id)
 
+        if requires_full_refresh:
+            self.delete_session_refined_transcripts(normalized_session_id)
+            records_to_refine = list(candidate_records)
+        else:
+            existing_source_ids = self._list_refined_source_ids(current_source_ids)
+            records_to_refine = [
+                item
+                for item in candidate_records
+                if self._record_id(item) not in existing_source_ids
+            ]
+        if not records_to_refine:
+            return self.list_session_refined_transcripts(normalized_session_id)
+
         model_name = self._resolve_model_name(runtime)
-        batches = self._build_batches(pending_records)
+        batches = self._build_batches(records_to_refine)
         for batch_index, batch in enumerate(batches, start=1):
             prompt = build_transcript_refine_prompt(
                 subject=getattr(session, "subject", None) if session else None,
@@ -109,6 +134,15 @@ class SessionTranscriptRefineService:
             response_text = self._complete_text(llm, prompt)
             payload = self._parse_json_payload(response_text)
             normalized_results = self._normalize_refined_results(payload, batch)
+            if not normalized_results:
+                logger.warning(
+                    "Transcript refinement batch %s/%s produced no parseable records. "
+                    "source_ids=%s response_preview=%r",
+                    batch_index,
+                    len(batches),
+                    [self._record_id(record) for record in batch[:8]],
+                    response_text[:500],
+                )
             for source_record, refined_text in normalized_results:
                 self.append_refined_transcript_record(
                     source_record=source_record,
@@ -223,13 +257,18 @@ class SessionTranscriptRefineService:
         self._runtime = None
 
     def _run_background_refinement(self, session_id: str) -> None:
-        try:
-            self.refine_session(session_id)
-        except Exception as exc:
-            logger.exception("Failed to refine transcript for session %s: %s", session_id, exc)
-        finally:
+        while True:
+            try:
+                self.refine_session(session_id)
+            except Exception as exc:
+                logger.exception("Failed to refine transcript for session %s: %s", session_id, exc)
+
             with self._lock:
+                if session_id in self._queued_sessions:
+                    self._queued_sessions.discard(session_id)
+                    continue
                 self._running_sessions.discard(session_id)
+                break
 
     def _get_runtime(self):
         runtime = self._runtime
@@ -243,12 +282,11 @@ class SessionTranscriptRefineService:
                 self._runtime = runtime
         return runtime
 
-    def _filter_pending_transcript_records(
+    def _collect_transcript_candidates(
         self,
         transcript_items: Sequence[Mapping[str, Any]],
     ) -> list[Mapping[str, Any]]:
         candidates: list[Mapping[str, Any]] = []
-        source_ids: list[int] = []
         for item in transcript_items:
             source_record_id = self._record_id(item)
             if source_record_id is None:
@@ -256,10 +294,7 @@ class SessionTranscriptRefineService:
             if not self._clean_transcript_text(item):
                 continue
             candidates.append(item)
-            source_ids.append(source_record_id)
-
-        existing_source_ids = self._list_refined_source_ids(source_ids)
-        return [item for item in candidates if self._record_id(item) not in existing_source_ids]
+        return candidates
 
     def _list_refined_source_ids(self, source_ids: Sequence[int]) -> set[int]:
         if not source_ids:
@@ -284,7 +319,10 @@ class SessionTranscriptRefineService:
         for record in records:
             text = self._clean_transcript_text(record)
             projected_size = current_size + len(text)
-            if current and projected_size > self.batch_char_limit:
+            if current and (
+                projected_size > self.batch_char_limit
+                or len(current) >= self.batch_record_limit
+            ):
                 batches.append(current)
                 current = []
                 current_size = 0

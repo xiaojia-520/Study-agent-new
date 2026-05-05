@@ -46,10 +46,12 @@ Rules:
 11. If the user asks about videos or replay, use get_lesson_videos.
 12. If the user asks about uploaded files or materials, use get_session_assets.
 13. If the user asks a factual lesson question that requires retrieval, use query_lesson_knowledge with a query argument.
+14. Include a short thought field that summarizes the current decision in one sentence. Keep it concise and operational.
 
 Output JSON schema:
 {{
   "action": "tool" | "final",
+  "thought": "one-sentence reasoning summary",
   "tool_name": "tool name when action is tool",
   "arguments": {{}},
   "final_answer": "answer text when action is final"

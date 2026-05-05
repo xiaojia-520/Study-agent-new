@@ -54,11 +54,13 @@ class SessionVisionServiceTests(unittest.TestCase):
     def test_process_frame_indexes_ppt_and_blackboard_regions(self) -> None:
         writer = FakeTranscriptWriter()
         indexer = FakeRagIndexer()
+        refine_calls = []
         service = SessionVisionService(
             ocr_extractor=FakeExtractor("PPT标题\n知识点A"),
             vlm_extractor=FakeExtractor("黑板公式 y = kx + b"),
             transcript_writer=writer,
             rag_indexer=indexer,
+            refine_scheduler=lambda session_id: refine_calls.append(session_id),
         )
 
         response = service.process_frame(
@@ -83,14 +85,17 @@ class SessionVisionServiceTests(unittest.TestCase):
         self.assertEqual(writer.records[1]["metadata"]["region"], "blackboard")
         self.assertIn("黑板公式", writer.records[1]["clean_text"])
         self.assertEqual(len(indexer.records), 2)
+        self.assertEqual(refine_calls, ["session-vision"])
 
     def test_duplicate_region_text_is_skipped(self) -> None:
         writer = FakeTranscriptWriter()
+        refine_calls = []
         service = SessionVisionService(
             ocr_extractor=FakeExtractor("重复PPT"),
             vlm_extractor=FakeExtractor(""),
             transcript_writer=writer,
             rag_indexer=FakeRagIndexer(),
+            refine_scheduler=lambda session_id: refine_calls.append(session_id),
         )
         session = self._session()
         regions = {"ppt": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}}
@@ -101,6 +106,7 @@ class SessionVisionServiceTests(unittest.TestCase):
         self.assertEqual(first["results"][0]["status"], "indexed")
         self.assertEqual(second["results"][0]["status"], "duplicate")
         self.assertEqual(len(writer.records), 1)
+        self.assertEqual(refine_calls, ["session-vision"])
 
     def test_busy_frame_is_skipped_without_waiting(self) -> None:
         extractor = BlockingExtractor()

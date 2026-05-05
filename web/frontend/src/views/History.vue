@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 
 import {
   createSession,
+  deleteLessonHistory,
   fetchLessonMessages,
   fetchLessonTranscripts,
   fetchRefinedLessonTranscripts,
@@ -26,6 +27,7 @@ import type {
 const sessionStore = useSessionStore()
 const { backendBaseUrl } = storeToRefs(sessionStore)
 
+const sidebarRef = ref<{ refresh: (resetSelection?: boolean) => Promise<void> } | null>(null)
 const selectedLesson = ref<LessonHistoryItem | null>(null)
 const messages = ref<LessonMessageItem[]>([])
 const transcripts = ref<TranscriptRecordItem[]>([])
@@ -38,10 +40,12 @@ const loadingRefinedTranscripts = ref(false)
 const reviewSession = ref<SessionInfo | null>(null)
 const followUpQuestion = ref('')
 const sendingFollowUp = ref(false)
+const deletingLesson = ref(false)
 const messageError = ref('')
 const transcriptError = ref('')
 const refinedTranscriptError = ref('')
 const followUpError = ref('')
+const deleteLessonError = ref('')
 
 const activeTranscriptCount = computed(() =>
   transcriptViewMode.value === 'refined' ? refinedTranscripts.value.length : transcripts.value.length,
@@ -58,16 +62,7 @@ const activeTranscriptEmpty = computed(() =>
 
 async function selectLesson(item: LessonHistoryItem): Promise<void> {
   selectedLesson.value = item
-  messages.value = []
-  transcripts.value = []
-  refinedTranscripts.value = []
-  transcriptViewMode.value = 'raw'
-  reviewSession.value = null
-  followUpQuestion.value = ''
-  messageError.value = ''
-  transcriptError.value = ''
-  refinedTranscriptError.value = ''
-  followUpError.value = ''
+  clearLessonState()
 
   if (!item.course_id || !item.lesson_id) {
     const message = '这节课缺少 course_id 或 lesson_id，无法加载历史记录。'
@@ -82,6 +77,20 @@ async function selectLesson(item: LessonHistoryItem): Promise<void> {
     loadLessonTranscripts(item.course_id, item.lesson_id),
     loadRefinedLessonTranscripts(item.course_id, item.lesson_id),
   ])
+}
+
+function clearLessonState(): void {
+  messages.value = []
+  transcripts.value = []
+  refinedTranscripts.value = []
+  transcriptViewMode.value = 'raw'
+  reviewSession.value = null
+  followUpQuestion.value = ''
+  messageError.value = ''
+  transcriptError.value = ''
+  refinedTranscriptError.value = ''
+  followUpError.value = ''
+  deleteLessonError.value = ''
 }
 
 async function loadLessonMessages(courseId: string, lessonId: string): Promise<void> {
@@ -221,6 +230,33 @@ async function sendFollowUpQuestion(): Promise<void> {
   }
 }
 
+async function deleteSelectedLesson(): Promise<void> {
+  const lesson = selectedLesson.value
+  if (!lesson?.course_id || !lesson.lesson_id || deletingLesson.value) {
+    return
+  }
+
+  const confirmed = window.confirm(
+    `确认删除这节课的历史记录？\n\n${lesson.course_id}\n${lesson.lesson_id}\n\n这会删除对应 SQL 记录和 RAG 索引。`,
+  )
+  if (!confirmed) {
+    return
+  }
+
+  deletingLesson.value = true
+  deleteLessonError.value = ''
+  try {
+    await deleteLessonHistory(lesson.course_id, lesson.lesson_id, backendBaseUrl.value)
+    selectedLesson.value = null
+    clearLessonState()
+    await sidebarRef.value?.refresh(true)
+  } catch (error) {
+    deleteLessonError.value = error instanceof Error ? error.message : '删除历史课程失败。'
+  } finally {
+    deletingLesson.value = false
+  }
+}
+
 function formatDateTime(timestamp?: number): string {
   if (!timestamp) {
     return '-'
@@ -265,7 +301,7 @@ function formatTimelineTime(timestamp?: number): string {
 
     <main class="min-h-0 flex-1 overflow-hidden p-3">
       <div class="grid h-full min-h-0 gap-3 lg:grid-cols-[360px_1fr]">
-        <SideBar class="min-h-0" @select="selectLesson" />
+        <SideBar ref="sidebarRef" class="min-h-0" @select="selectLesson" />
 
         <section
           class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-5"
@@ -285,6 +321,14 @@ function formatTimelineTime(timestamp?: number): string {
               </div>
 
               <div class="flex shrink-0 flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-1.5 text-sm font-semibold text-[rgb(var(--danger))] transition hover:bg-[rgba(var(--danger),0.12)] disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="deletingLesson"
+                  @click="deleteSelectedLesson"
+                >
+                  {{ deletingLesson ? '删除中' : '删除课程记录' }}
+                </button>
                 <span class="rounded-full bg-[rgba(var(--accent),0.12)] px-3 py-1.5 text-sm font-semibold text-[rgb(var(--accent))]">
                   {{ selectedLesson.message_count }} 条问答
                 </span>
@@ -293,6 +337,13 @@ function formatTimelineTime(timestamp?: number): string {
                 </span>
               </div>
             </div>
+
+            <p
+              v-if="deleteLessonError"
+              class="mt-3 shrink-0 rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
+            >
+              {{ deleteLessonError }}
+            </p>
 
             <div class="mt-4 grid shrink-0 gap-3 md:grid-cols-3">
               <article class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))] p-4">

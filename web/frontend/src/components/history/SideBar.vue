@@ -38,22 +38,31 @@ const filteredItems = computed(() => {
   })
 })
 
-async function loadHistory(): Promise<void> {
+async function loadHistory(resetSelection = false): Promise<void> {
   loading.value = true
   errorMessage.value = ''
+  if (resetSelection) {
+    selectedKey.value = ''
+  }
 
   try {
     const response = await fetchLessonHistory(80, backendBaseUrl.value)
     historyItems.value = response.items
     const firstItem = response.items[0]
-    if (!selectedKey.value && firstItem) {
+    if ((resetSelection || !selectedKey.value) && firstItem) {
       selectLesson(firstItem)
+    } else if (resetSelection && !firstItem) {
+      selectedKey.value = ''
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '获取历史课程失败。'
   } finally {
     loading.value = false
   }
+}
+
+function refreshHistory(): void {
+  void loadHistory()
 }
 
 function lessonKey(item: LessonHistoryItem): string {
@@ -108,7 +117,7 @@ onMounted(() => {
         type="button"
         class="rounded-full bg-[rgba(var(--bg-muted),0.95)] px-3 py-1.5 text-sm font-semibold text-[rgb(var(--text-subtle))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
         :disabled="loading"
-        @click="loadHistory"
+        @click="refreshHistory"
       >
         {{ loading ? '刷新中' : '刷新' }}
       </button>

@@ -24,22 +24,20 @@ class FakeLLM:
 
 
 class LessonNoteServiceTests(unittest.TestCase):
-    def test_generate_note_persists_structured_note(self) -> None:
+    def test_generate_note_persists_markdown_note(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service, transcript_service, repository, llm = self._build_service(
                 temp_dir,
                 responses=[
                     """
-                    {
-                      "title": "HTTP Session Notes",
-                      "overview": "The lesson explains why HTTP needs sessions to preserve user state.",
-                      "key_points": ["HTTP is stateless", "Sessions connect requests"],
-                      "concepts": [{"term": "Session", "explanation": "Server-side user state"}],
-                      "examples": ["A cookie carries the session identifier"],
-                      "timeline": [{"time": "00:01:00", "content": "Session identifiers were introduced"}],
-                      "review_items": ["Review cookie and session relationship"],
-                      "questions": ["Why does HTTP need a session id?"]
-                    }
+                    # HTTP Session Notes
+
+                    The lesson explains why HTTP needs sessions to preserve user state.
+
+                    ## 核心知识点
+
+                    - HTTP is stateless.
+                    - A cookie can carry the session identifier.
                     """
                 ],
             )
@@ -57,11 +55,12 @@ class LessonNoteServiceTests(unittest.TestCase):
             self.assertEqual(note.title, "HTTP Session Notes")
             self.assertIn("preserve user state", note.summary or "")
             self.assertIn("# HTTP Session Notes", note.markdown or "")
-            self.assertEqual(note.note["concepts"][0]["term"], "Session")
+            self.assertEqual(note.note["key_points"], [])
             self.assertEqual(note.source_record_count, 2)
             self.assertEqual(note.model_name, "fake-note-model")
             self.assertEqual(note.metadata["source_type_counts"], {"realtime": 1, "video": 1})
-            self.assertIn("source=realtime", llm.prompts[0])
+            self.assertIn("这是这节课的语音识别文字", llm.prompts[0])
+            self.assertIn("[01:00] A cookie can carry the session identifier.", llm.prompts[0])
 
             latest = repository.get_latest_note(course_id="web-course", lesson_id="lesson-1")
             self.assertIsNotNone(latest)
@@ -71,26 +70,44 @@ class LessonNoteServiceTests(unittest.TestCase):
             self.assertFalse(cached_plan.should_generate)
             self.assertEqual(cached_plan.note.note_id, note.note_id)
 
-    def test_generate_note_merges_multiple_chunks(self) -> None:
+    def test_generate_note_uses_single_pass_even_when_context_is_long(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service, transcript_service, _repository, llm = self._build_service(
                 temp_dir,
                 responses=[
-                    '{"title":"Chunk A","overview":"A","key_points":["A"],"concepts":[],"examples":[],"timeline":[],"review_items":[],"questions":[]}',
-                    '{"title":"Chunk B","overview":"B","key_points":["B"],"concepts":[],"examples":[],"timeline":[],"review_items":[],"questions":[]}',
-                    '{"title":"Merged","overview":"Merged overview","key_points":["A","B"],"concepts":[],"examples":[],"timeline":[],"review_items":[],"questions":[]}',
+                    """
+                    ```md
+                    # Single Pass Note
+
+                    This note was generated in one pass.
+                    ```
+                    """,
                 ],
                 chunk_char_limit=40,
             )
             self._append_transcripts(transcript_service)
+            transcript_service.append_transcript_record(
+                {
+                    "session_id": "session-a",
+                    "storage_id": "asset-a",
+                    "course_id": "web-course",
+                    "lesson_id": "lesson-1",
+                    "chunk_id": 3,
+                    "subject": "web",
+                    "source_type": "pdf",
+                    "text": "This OCR text should not be included.",
+                    "clean_text": "This OCR text should not be included.",
+                    "created_at": 102,
+                }
+            )
 
             note = service.generate_note(course_id="web-course", lesson_id="lesson-1")
 
-            self.assertEqual(note.title, "Merged")
-            self.assertEqual(note.note["key_points"], ["A", "B"])
-            self.assertEqual(note.metadata["chunk_count"], 2)
-            self.assertEqual(len(llm.prompts), 3)
-            self.assertIn("Merge the chunk-level notes", llm.prompts[-1])
+            self.assertEqual(note.title, "Single Pass Note")
+            self.assertEqual(note.metadata["chunk_count"], 1)
+            self.assertEqual(note.metadata["output_format"], "markdown_direct_speech_only")
+            self.assertEqual(len(llm.prompts), 1)
+            self.assertNotIn("This OCR text should not be included.", llm.prompts[0])
 
     def test_generate_pending_note_marks_failed_when_llm_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

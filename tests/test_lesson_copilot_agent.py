@@ -51,9 +51,9 @@ class LessonCopilotAgentTests(unittest.TestCase):
         registry = build_tools(FakeLessonNoteService(), "web-course", "lesson-1")
         llm = FakeLLM(
             [
-                '{"action":"tool","tool_name":"get_lesson_note","arguments":{}}',
-                '{"action":"tool","tool_name":"generate_lesson_note","arguments":{}}',
-                '{"action":"final","final_answer":"I just generated a lesson note: Generated from fake service."}',
+                '{"action":"tool","thought":"Check whether a note already exists first.","tool_name":"get_lesson_note","arguments":{}}',
+                '{"action":"tool","thought":"No note found, so generate one now.","tool_name":"generate_lesson_note","arguments":{}}',
+                '{"action":"final","thought":"The note is ready, so I can answer directly.","final_answer":"I just generated a lesson note: Generated from fake service."}',
             ]
         )
         agent = LessonCopilotAgent(llm, Executor(registry))
@@ -64,7 +64,28 @@ class LessonCopilotAgentTests(unittest.TestCase):
         )
 
         self.assertEqual(result.answer, "I just generated a lesson note: Generated from fake service.")
+        self.assertEqual(result.steps[0].thought, "Check whether a note already exists first.")
         self.assertEqual(result.steps[1].tool_name, "generate_lesson_note")
+
+    def test_agent_falls_back_when_llm_returns_invalid_json(self) -> None:
+        registry = build_tools(FakeLessonNoteService(), "web-course", "lesson-1")
+        llm = FakeLLM(
+            [
+                '{"action":"tool","tool_name":"get_lesson_note","arguments":{}}',
+                '{"action":"tool","tool_name":"generate_lesson_note","arguments":{}}',
+                '{"action":"final","final_answer":"I just generated a lesson note: Generated from fake service.',
+            ]
+        )
+        agent = LessonCopilotAgent(llm, Executor(registry))
+
+        result = agent.run(
+            CopilotContext(course_id="web-course", lesson_id="lesson-1"),
+            "Help me review this lesson.",
+        )
+
+        self.assertEqual(result.answer, "Generated from fake service.")
+        self.assertEqual(result.metadata["stopped_by"], "parse_error")
+        self.assertEqual(result.steps[-1].final_answer, "Generated from fake service.")
 
 
 if __name__ == "__main__":

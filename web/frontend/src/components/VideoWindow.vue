@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onBeforeUpdate, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import {
@@ -29,6 +30,10 @@ const {
 const videoRef = ref<HTMLVideoElement | null>(null)
 const previewHostRef = ref<HTMLElement | null>(null)
 const frameRef = ref<HTMLElement | null>(null)
+const videoUploadInputRef = ref<HTMLInputElement | null>(null)
+const subtitleTrackRef = ref<HTMLTrackElement | null>(null)
+const subtitleListRef = ref<HTMLElement | null>(null)
+const subtitleItemRefs = ref<HTMLElement[]>([])
 const cameraStream = ref<MediaStream | null>(null)
 const loadingCamera = ref(false)
 const cameraError = ref('')
@@ -48,6 +53,8 @@ const visionFrameCount = ref(0)
 const visionRecordCount = ref(0)
 const visionError = ref('')
 const visionStatusMessage = ref('')
+const subtitleTrackUrl = ref('')
+const activeSubtitleIndex = ref(-1)
 
 const frameStyle = ref({
   width: '0px',
@@ -55,6 +62,7 @@ const frameStyle = ref({
 })
 
 let resizeObserver: ResizeObserver | null = null
+let boundSubtitleTrack: TextTrack | null = null
 
 const subtitles = computed(() => selectedVideo.value?.segments ?? [])
 const cameraEnabled = computed(() => cameraStream.value !== null)
@@ -281,10 +289,27 @@ function revokeLocalVideoUrl(): void {
   }
 }
 
+function revokeSubtitleTrackUrl(): void {
+  if (subtitleTrackUrl.value) {
+    URL.revokeObjectURL(subtitleTrackUrl.value)
+    subtitleTrackUrl.value = ''
+  }
+}
+
+function resetSubtitlePlaybackState(): void {
+  activeSubtitleIndex.value = -1
+  void nextTick(() => {
+    if (subtitleListRef.value) {
+      subtitleListRef.value.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  })
+}
+
 function setLocalPlaybackSource(blob: Blob): void {
   revokeLocalVideoUrl()
   localVideoObjectUrl = URL.createObjectURL(blob)
   videoSourceUrl.value = localVideoObjectUrl
+  resetSubtitlePlaybackState()
   if (videoRef.value) {
     videoRef.value.currentTime = 0
   }
@@ -296,6 +321,12 @@ function setRemotePlaybackSource(video: SessionVideoItem): void {
   }
   revokeLocalVideoUrl()
   videoSourceUrl.value = buildApiUrl(video.video_url, backendBaseUrl.value)
+  resetSubtitlePlaybackState()
+  void nextTick(() => {
+    if (videoRef.value) {
+      videoRef.value.currentTime = 0
+    }
+  })
 }
 
 function startVisionCaptureTimer(startedAtMs = Date.now()): void {
@@ -512,7 +543,57 @@ function fileExtensionForMimeType(mimeType: string): string {
   if (mimeType.includes('mp4')) {
     return 'mp4'
   }
+  if (mimeType.includes('quicktime')) {
+    return 'mov'
+  }
   return 'webm'
+}
+
+function openVideoUploadPicker(): void {
+  if (recording.value || recordingVideo.value || uploadingVideo.value) {
+    return
+  }
+  videoUploadInputRef.value?.click()
+}
+
+async function handleVideoFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) {
+    return
+  }
+
+  await uploadLocalVideoFile(file)
+}
+
+async function uploadLocalVideoFile(file: File): Promise<void> {
+  if (recording.value || recordingVideo.value) {
+    cameraError.value = '课堂录制进行中，暂时不能上传本地视频。'
+    return
+  }
+
+  cameraError.value = ''
+  videoStatusMessage.value = ''
+  clearPollTimer()
+  clearVisionCaptureTimer()
+  processingVideo.value = false
+  stopCameraStream()
+
+  try {
+    const session = await sessionStore.ensureSession()
+    recordingSessionId = session.session_id
+    videoRecordingStartedAt = 0
+    selectedVideo.value = null
+    setLocalPlaybackSource(file)
+    await uploadRecordedVideo(session.session_id, file, file.type, {
+      fileName: file.name,
+      recordingEndedAtMs: Date.now(),
+    })
+  } catch (error) {
+    processingVideo.value = false
+    cameraError.value = error instanceof Error ? error.message : '上传本地视频失败。'
+  }
 }
 
 async function startVideoRecording(): Promise<void> {
@@ -618,13 +699,21 @@ async function handleRecorderStopped(): Promise<void> {
     return
   }
 
-  await uploadRecordedVideo(recordingSessionId, blob, recorder?.mimeType || activeMimeType)
+  await uploadRecordedVideo(recordingSessionId, blob, recorder?.mimeType || activeMimeType, {
+    recordingStartedAtMs: videoRecordingStartedAt || undefined,
+    recordingEndedAtMs: Date.now(),
+  })
 }
 
 async function uploadRecordedVideo(
   sessionId: string,
-  blob: Blob,
+  source: Blob | File,
   mimeType: string,
+  options: {
+    fileName?: string
+    recordingStartedAtMs?: number
+    recordingEndedAtMs?: number
+  } = {},
 ): Promise<void> {
   uploadingVideo.value = true
   processingVideo.value = false
@@ -632,13 +721,17 @@ async function uploadRecordedVideo(
   cameraError.value = ''
 
   try {
-    const effectiveMimeType = mimeType || blob.type || 'video/webm'
+    const effectiveMimeType = mimeType || source.type || 'video/webm'
     const extension = fileExtensionForMimeType(effectiveMimeType)
-    const fileName = `classroom-video-${sessionId}-${Date.now()}.${extension}`
-    const file = new File([blob], fileName, { type: effectiveMimeType })
+    const fileName =
+      options.fileName?.trim() || `classroom-video-${sessionId}-${Date.now()}.${extension}`
+    const file =
+      source instanceof File
+        ? source
+        : new File([source], fileName, { type: effectiveMimeType })
     const response = await uploadSessionVideo(sessionId, file, backendBaseUrl.value, {
-      recordingStartedAtMs: videoRecordingStartedAt || undefined,
-      recordingEndedAtMs: Date.now(),
+      recordingStartedAtMs: options.recordingStartedAtMs,
+      recordingEndedAtMs: options.recordingEndedAtMs,
     })
 
     selectedVideo.value = response.item
@@ -731,8 +824,10 @@ function seekToSubtitle(segment: VideoSubtitleSegment): void {
   if (!videoRef.value || !videoSourceUrl.value) {
     return
   }
+  activeSubtitleIndex.value = subtitles.value.indexOf(segment)
   videoRef.value.currentTime = Math.max(0, segment.start_ms / 1000)
   void videoRef.value.play()
+  scrollCurrentSubtitleIntoView()
 }
 
 function formatTime(ms: number): string {
@@ -748,6 +843,138 @@ function formatTime(ms: number): string {
   return `${minuteText}:${secondText}`
 }
 
+function rebuildSubtitleTrack(): void {
+  unbindSubtitleTrack()
+  revokeSubtitleTrackUrl()
+  if (subtitles.value.length === 0) {
+    activeSubtitleIndex.value = -1
+    return
+  }
+
+  const content = buildWebVtt(subtitles.value)
+  if (!content.trim()) {
+    activeSubtitleIndex.value = -1
+    return
+  }
+
+  const blob = new Blob([content], { type: 'text/vtt;charset=utf-8' })
+  subtitleTrackUrl.value = URL.createObjectURL(blob)
+  resetSubtitlePlaybackState()
+}
+
+function buildWebVtt(items: VideoSubtitleSegment[]): string {
+  const lines = ['WEBVTT', '']
+  for (const [index, segment] of items.entries()) {
+    const text = normalizeCueText(segment.text)
+    if (!text) {
+      continue
+    }
+    const startMs = Math.max(0, segment.start_ms)
+    const endMs = Math.max(startMs + 200, segment.end_ms)
+    lines.push(`subtitle-${index}`)
+    lines.push(`${formatVttTime(startMs)} --> ${formatVttTime(endMs)}`)
+    lines.push(text)
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+function normalizeCueText(text: string): string {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/-->/g, '->')
+    .trim()
+}
+
+function formatVttTime(ms: number): string {
+  const safeMs = Math.max(0, Math.floor(ms))
+  const hours = Math.floor(safeMs / 3_600_000)
+  const minutes = Math.floor((safeMs % 3_600_000) / 60_000)
+  const seconds = Math.floor((safeMs % 60_000) / 1000)
+  const milliseconds = safeMs % 1000
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`
+}
+
+function setSubtitleTrackRef(el: Element | ComponentPublicInstance | null): void {
+  subtitleTrackRef.value = el instanceof HTMLTrackElement ? el : null
+}
+
+function bindSubtitleTrack(): void {
+  unbindSubtitleTrack()
+  const track = subtitleTrackRef.value?.track
+  if (!track) {
+    return
+  }
+  track.mode = 'showing'
+  boundSubtitleTrack = track
+  track.addEventListener('cuechange', handleSubtitleCueChange)
+  syncActiveSubtitleFromTrack()
+}
+
+function unbindSubtitleTrack(): void {
+  if (boundSubtitleTrack) {
+    boundSubtitleTrack.removeEventListener('cuechange', handleSubtitleCueChange)
+    boundSubtitleTrack = null
+  }
+}
+
+function handleSubtitleCueChange(): void {
+  syncActiveSubtitleFromTrack()
+}
+
+function syncActiveSubtitleFromTrack(): void {
+  const activeCue = boundSubtitleTrack?.activeCues?.[0]
+  if (!activeCue?.id) {
+    activeSubtitleIndex.value = -1
+    return
+  }
+  const match = /^subtitle-(\d+)$/.exec(activeCue.id)
+  if (!match) {
+    activeSubtitleIndex.value = -1
+    return
+  }
+  const index = Number(match[1])
+  activeSubtitleIndex.value =
+    Number.isInteger(index) && index >= 0 && index < subtitles.value.length ? index : -1
+}
+
+function setSubtitleItemRef(el: Element | ComponentPublicInstance | null, index: number): void {
+  if (el instanceof HTMLElement) {
+    subtitleItemRefs.value[index] = el
+  }
+}
+
+function scrollActiveSubtitleIntoView(index: number): void {
+  const container = subtitleListRef.value
+  const item = subtitleItemRefs.value[index]
+  if (!container || !item) {
+    return
+  }
+
+  const itemTop = item.offsetTop
+  const itemBottom = itemTop + item.offsetHeight
+  const visibleTop = container.scrollTop
+  const visibleBottom = visibleTop + container.clientHeight
+  if (itemTop >= visibleTop && itemBottom <= visibleBottom) {
+    return
+  }
+
+  container.scrollTo({
+    top: Math.max(0, itemTop - container.clientHeight * 0.35),
+    behavior: 'auto',
+  })
+}
+
+function scrollCurrentSubtitleIntoView(): void {
+  const index = activeSubtitleIndex.value
+  if (index < 0) {
+    return
+  }
+  void nextTick(() => {
+    scrollActiveSubtitleIntoView(index)
+  })
+}
+
 watch(
   recording,
   (isRecording, wasRecording) => {
@@ -761,6 +988,21 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  subtitles,
+  () => {
+    rebuildSubtitleTrack()
+  },
+  { immediate: true },
+)
+
+watch(activeSubtitleIndex, (index) => {
+  if (index < 0) {
+    return
+  }
+  scrollCurrentSubtitleIntoView()
+})
 
 watch(
   currentSessionId,
@@ -782,6 +1024,10 @@ watch(
   { immediate: true },
 )
 
+onBeforeUpdate(() => {
+  subtitleItemRefs.value = []
+})
+
 onMounted(() => {
   updateFrameSize()
 
@@ -797,6 +1043,8 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   clearPollTimer()
   clearVisionCaptureTimer()
+  unbindSubtitleTrack()
+  revokeSubtitleTrackUrl()
   window.removeEventListener('pointermove', handleVisionPointerMove)
   window.removeEventListener('pointerup', finishVisionRegionSelection)
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
@@ -851,7 +1099,21 @@ onBeforeUnmount(() => {
             :controls="hasPlayableVideo"
             :muted="cameraEnabled"
             playsinline
-          />
+            @loadedmetadata="resetSubtitlePlaybackState"
+            @timeupdate="syncActiveSubtitleFromTrack"
+          >
+            <track
+              v-if="hasPlayableVideo && subtitleTrackUrl"
+              :key="subtitleTrackUrl"
+              :ref="setSubtitleTrackRef"
+              :src="subtitleTrackUrl"
+              kind="subtitles"
+              srclang="zh-CN"
+              label="课堂字幕"
+              default
+              @load="bindSubtitleTrack"
+            />
+          </video>
 
           <div
             v-if="!hasVisual"
@@ -962,13 +1224,20 @@ onBeforeUnmount(() => {
 
       <div
         v-if="subtitles.length > 0"
+        ref="subtitleListRef"
         class="min-h-[120px] overflow-auto rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgba(var(--bg-muted),0.45)] p-2"
       >
         <button
-          v-for="segment in subtitles"
+          v-for="(segment, index) in subtitles"
           :key="`${segment.start_ms}-${segment.end_ms}-${segment.text}`"
+          :ref="(el) => setSubtitleItemRef(el, index)"
           type="button"
           class="mb-2 flex w-full gap-3 rounded-[var(--radius-soft)] px-3 py-2 text-left transition hover:bg-[rgba(var(--accent),0.08)]"
+          :class="
+            activeSubtitleIndex === index
+              ? 'bg-[rgba(var(--accent),0.14)] ring-1 ring-[rgba(var(--accent),0.22)]'
+              : ''
+          "
           @click="seekToSubtitle(segment)"
         >
           <span class="shrink-0 font-mono text-xs text-[rgb(var(--text-faint))]">
@@ -1002,5 +1271,22 @@ onBeforeUnmount(() => {
               : '开启视频预览'
       }}
     </button>
+
+    <button
+      type="button"
+      class="mt-3 inline-flex shrink-0 items-center justify-center rounded-[var(--radius-soft)] bg-[rgba(var(--success),0.12)] px-4 py-3 font-semibold text-[rgb(var(--success))] transition hover:bg-[rgba(var(--success),0.18)] disabled:cursor-not-allowed disabled:opacity-60"
+      :disabled="recording || recordingVideo || uploadingVideo"
+      @click="openVideoUploadPicker"
+    >
+      {{ uploadingVideo ? '视频上传中...' : '上传本地视频' }}
+    </button>
+
+    <input
+      ref="videoUploadInputRef"
+      type="file"
+      class="hidden"
+      accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi"
+      @change="handleVideoFileSelected"
+    />
   </section>
 </template>

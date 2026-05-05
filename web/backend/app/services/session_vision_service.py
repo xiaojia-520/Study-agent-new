@@ -14,6 +14,7 @@ from PIL import Image
 from config.settings import settings
 from src.application.rag.ingestion_service import KnowledgeIngestionService
 from src.domain.session import RealtimeSession
+from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.realtime_rag_indexer import realtime_rag_indexer
 from web.backend.app.services.transcript_service import transcript_service
 
@@ -55,6 +56,7 @@ class SessionVisionService:
         transcript_writer=transcript_service,
         rag_indexer=realtime_rag_indexer,
         ingestion_service: KnowledgeIngestionService | None = None,
+        refine_scheduler=None,
     ) -> None:
         self.ocr_extractor = ocr_extractor or LocalPaddleOcrExtractor()
         self.vlm_extractor = vlm_extractor or LocalQwenVlExtractor()
@@ -62,6 +64,7 @@ class SessionVisionService:
             transcript_writer=transcript_writer,
             realtime_indexer=rag_indexer,
         )
+        self.refine_scheduler = refine_scheduler or session_transcript_refine_service.enqueue_session
         self._last_hash_by_region: dict[tuple[str, str], str] = {}
         self._lock = threading.RLock()
         self._processing_lock = threading.Lock()
@@ -133,11 +136,11 @@ class SessionVisionService:
                         region_name=region_name,
                         region=region,
                         text=text,
-                    chunk_id=next_chunk_id,
-                    timestamp_ms=timestamp_ms,
-                    captured_at_ms=captured_at_ms,
-                    image_size=image.size,
-                )
+                        chunk_id=next_chunk_id,
+                        timestamp_ms=timestamp_ms,
+                        captured_at_ms=captured_at_ms,
+                        image_size=image.size,
+                    )
                     record_id = self.ingestion_service.persist_and_enqueue_realtime_record(session, record)
                     self._remember_hash(session.session_id, region_name, text_hash)
 
@@ -155,6 +158,7 @@ class SessionVisionService:
 
             if records:
                 self._flush_rag_session(session.session_id)
+                self._enqueue_refinement(session.session_id)
 
             return {
                 "session_id": session.session_id,
@@ -223,6 +227,12 @@ class SessionVisionService:
 
     def _flush_rag_session(self, session_id: str) -> None:
         self.ingestion_service.flush_session(session_id)
+
+    def _enqueue_refinement(self, session_id: str) -> None:
+        try:
+            self.refine_scheduler(session_id)
+        except Exception as exc:
+            logger.exception("Failed to enqueue transcript refinement for vision session %s: %s", session_id, exc)
 
 
 class LocalPaddleOcrExtractor:

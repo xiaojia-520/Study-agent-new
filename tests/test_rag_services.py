@@ -93,6 +93,41 @@ class RagServicesTests(unittest.TestCase):
         self.assertEqual(documents[0].doc_id, "session-a:1-1:0")
         self.assertEqual(documents[0].metadata["session_id"], "session-a")
 
+    def test_build_llama_documents_uses_lightweight_vector_metadata(self) -> None:
+        records = [
+            self._record(
+                session_id="session-" + "a" * 32,
+                chunk_id=index,
+                text=f"segment {index}",
+                source_type="video",
+                source_file="lecture.mp4",
+                metadata={
+                    "parser": "offline_funasr",
+                    "transcript_role": "final",
+                    "video_id": "video-1",
+                    "srt_path": "E:/" + "very-long-path/" * 80 + "lecture.srt",
+                    "timeline_ms": index * 1000,
+                },
+            )
+            for index in range(1, 16)
+        ]
+        chunks = RagIndexingService(
+            index_store=FakeIndexStore(),
+            chunk_options=ChunkingOptions(max_chars=1000, overlap_records=0, min_chunk_chars=1),
+            document_builder=lambda chunks: build_llama_documents(chunks, document_cls=FakeDocument),
+        ).build_chunks(records)
+
+        documents = build_llama_documents(chunks, document_cls=FakeDocument)
+        metadata = documents[0].metadata
+
+        self.assertEqual(metadata["video_id"], "video-1")
+        self.assertEqual(metadata["parser"], "offline_funasr")
+        self.assertEqual(metadata["course_id"], "math-course")
+        self.assertEqual(metadata["lesson_id"], "math-course-lesson-1")
+        self.assertNotIn("record_ids", metadata)
+        self.assertNotIn("srt_path", metadata)
+        self.assertLess(len(str(metadata)), 1024)
+
     def test_rag_indexing_service_indexes_records(self) -> None:
         index_store = FakeIndexStore()
         service = RagIndexingService(
@@ -171,15 +206,29 @@ class RagServicesTests(unittest.TestCase):
         self.assertEqual(result.results[0].doc_id, "doc-9")
         self.assertEqual(result.metadata["mode"], "rag")
 
-    def _record(self, *, chunk_id: int, text: str) -> TranscriptRecord:
+    def _record(
+        self,
+        *,
+        chunk_id: int,
+        text: str,
+        session_id: str = "session-a",
+        source_type: str = "realtime",
+        source_file: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> TranscriptRecord:
         return TranscriptRecord(
-            session_id="session-a",
+            session_id=session_id,
             chunk_id=chunk_id,
             subject="math",
-            source_type="realtime",
+            source_type=source_type,
             text=text,
             clean_text=text,
             created_at=100 + chunk_id,
+            storage_id=f"storage-{session_id}",
+            course_id="math-course",
+            lesson_id="math-course-lesson-1",
+            source_file=source_file,
+            metadata=dict(metadata or {}),
         )
 
 

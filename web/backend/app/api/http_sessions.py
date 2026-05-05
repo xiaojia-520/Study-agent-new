@@ -14,6 +14,7 @@ from config.settings import settings
 from src.core.asr.realtime_models import resolve_realtime_asr_model
 from web.backend.app.services.chat_memory_service import chat_memory_service
 from web.backend.app.services.lesson_asset_service import lesson_asset_service, validate_asset_file_name
+from web.backend.app.services.lesson_history_service import lesson_history_service
 from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
 from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
 from web.backend.app.services.session_rag_query_service import (
@@ -121,6 +122,17 @@ async def list_lesson_history(limit: int = Query(default=50, ge=1, le=200)):
         "count": len(items),
         "items": [asdict(item) for item in items],
     }
+
+
+@router.delete("/history/lesson")
+async def delete_lesson_history(
+    course_id: str = Query(..., min_length=1),
+    lesson_id: str = Query(..., min_length=1),
+):
+    try:
+        return lesson_history_service.delete_lesson(course_id=course_id, lesson_id=lesson_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/history/messages")

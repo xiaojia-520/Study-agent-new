@@ -112,6 +112,13 @@ export interface LessonHistoryResponse {
   items: LessonHistoryItem[]
 }
 
+export interface DeleteLessonHistoryResponse {
+  deleted: boolean
+  course_id: string
+  lesson_id: string
+  counts: Record<string, number>
+}
+
 export interface LessonMessageItem {
   id: number
   session_id: string
@@ -189,12 +196,20 @@ export interface GenerateLessonNoteResponse extends LessonNoteResponse {
 
 export interface LessonCopilotStepItem {
   action: string
+  thought?: string | null
   tool_name?: string | null
   arguments?: Record<string, unknown>
   tool_ok?: boolean | null
   tool_result?: Record<string, unknown> | string | null
   error?: string | null
   final_answer?: string | null
+}
+
+export interface LessonCopilotTimelineItem {
+  kind: 'user' | 'thought' | 'tool' | 'final' | 'error'
+  key: string
+  text?: string
+  step?: LessonCopilotStepItem
 }
 
 export interface LessonCopilotResponse {
