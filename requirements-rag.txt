@@ -6,7 +6,7 @@ qdrant-client
 
 # Web backend
 fastapi
-uvicorn[standard]
+uvicorn
 pydantic-settings
 python-dotenv
 python-multipart
@@ -17,7 +17,6 @@ modelscope
 # Embedding runtime
 sentence-transformers
 transformers
-torch
 openai
 numpy
 accelerate
@@ -29,6 +28,7 @@ sounddevice
 ffmpeg-python
 
 # Vision / OCR pipeline
+
 ultralytics
 paddlepaddle
 paddleocr

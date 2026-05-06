@@ -45,16 +45,12 @@ class SessionTranscriptRefineService:
         runtime_closer=None,
         session_getter=session_manager.get_session,
         transcript_loader=transcript_service.list_session_transcripts,
-        batch_char_limit: int = 6000,
-        batch_record_limit: int = 20,
     ) -> None:
         self.store = store
         self.runtime_factory = runtime_factory or _build_runtime
         self.runtime_closer = runtime_closer or close_shared_rag_runtime
         self.session_getter = session_getter
         self.transcript_loader = transcript_loader
-        self.batch_char_limit = max(1, int(batch_char_limit))
-        self.batch_record_limit = max(1, int(batch_record_limit))
         self._runtime = None
         self._lock = threading.RLock()
         self._running_sessions: set[str] = set()
@@ -312,27 +308,8 @@ class SessionTranscriptRefineService:
         return {int(row["source_record_id"]) for row in rows}
 
     def _build_batches(self, records: Sequence[Mapping[str, Any]]) -> list[list[Mapping[str, Any]]]:
-        batches: list[list[Mapping[str, Any]]] = []
-        current: list[Mapping[str, Any]] = []
-        current_size = 0
-
-        for record in records:
-            text = self._clean_transcript_text(record)
-            projected_size = current_size + len(text)
-            if current and (
-                projected_size > self.batch_char_limit
-                or len(current) >= self.batch_record_limit
-            ):
-                batches.append(current)
-                current = []
-                current_size = 0
-
-            current.append(record)
-            current_size += len(text)
-
-        if current:
-            batches.append(current)
-        return batches
+        materialized = [record for record in records if self._record_id(record) is not None]
+        return [materialized] if materialized else []
 
     def _normalize_refined_results(
         self,

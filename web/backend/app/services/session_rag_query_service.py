@@ -133,7 +133,7 @@ class SessionRagQueryService:
         transcript_loader=transcript_service.list_session_transcripts,
         lesson_transcript_loader=transcript_service.list_lesson_transcripts,
         recent_transcript_limit: int = 3,
-        recent_classroom_context_limit: int = 30,
+        recent_classroom_context_limit: int = 200,
         recent_lesson_window_limit: int = 8,
         memory_service: ChatMemoryService | None = None,
         memory_turn_limit: int = 6,
