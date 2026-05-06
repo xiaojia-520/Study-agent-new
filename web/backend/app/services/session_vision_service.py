@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
 
+_MISSING = object()
+
 
 class RegionTextExtractor(Protocol):
     def extract_text(self, image: Image.Image) -> str: ...
@@ -248,12 +250,33 @@ class LocalPaddleOcrExtractor:
             raise ImportError("numpy is required for local OCR") from exc
 
         array = np.asarray(image.convert("RGB"))
+        try:
+            raw_result = self._run_inference(engine, array)
+            return _normalize_text("\n".join(_extract_ocr_texts(raw_result)))
+        except Exception as exc:
+            if _is_empty_json_parse_error(exc):
+                logger.warning("PaddleOCR returned an empty payload for PPT OCR; treating it as no text")
+                return ""
+            raise RuntimeError(f"PaddleOCR inference failed: {exc}") from exc
+
+    @staticmethod
+    def _run_inference(engine, array):
         predict = getattr(engine, "predict", None)
+        predict_error: Exception | None = None
         if callable(predict):
-            raw_result = predict(array)
-        else:
-            raw_result = engine.ocr(array, cls=settings.OCR_USE_TEXTLINE_ORIENTATION)
-        return _normalize_text("\n".join(_extract_ocr_texts(raw_result)))
+            try:
+                return predict(array)
+            except Exception as exc:
+                predict_error = exc
+                logger.warning("PaddleOCR predict() failed, falling back to ocr(): %s", exc)
+
+        ocr = getattr(engine, "ocr", None)
+        if callable(ocr):
+            return ocr(array, cls=settings.OCR_USE_TEXTLINE_ORIENTATION)
+
+        if predict_error is not None:
+            raise predict_error
+        raise RuntimeError("PaddleOCR engine has no supported inference method")
 
     def _get_engine(self):
         with self._lock:
@@ -431,19 +454,17 @@ def _collect_ocr_texts(value: Any, texts: list[str]) -> None:
     if isinstance(value, str):
         texts.append(value)
         return
-    json_payload = getattr(value, "json", None)
-    if callable(json_payload):
-        json_payload = json_payload()
-    if isinstance(json_payload, Mapping):
+    json_payload = _call_ocr_result_method(value, "json")
+    if json_payload is not _MISSING:
         _collect_ocr_texts(json_payload, texts)
         return
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        _collect_ocr_texts(to_dict(), texts)
+    to_dict = _call_ocr_result_method(value, "to_dict")
+    if to_dict is not _MISSING:
+        _collect_ocr_texts(to_dict, texts)
         return
-    to_json = getattr(value, "to_json", None)
-    if callable(to_json):
-        _collect_ocr_texts(to_json(), texts)
+    to_json = _call_ocr_result_method(value, "to_json")
+    if to_json is not _MISSING:
+        _collect_ocr_texts(to_json, texts)
         return
     if isinstance(value, Mapping):
         collected = False
@@ -474,9 +495,27 @@ def _collect_ocr_texts(value: Any, texts: list[str]) -> None:
             _collect_ocr_texts(item, texts)
 
 
+def _call_ocr_result_method(value: Any, method_name: str) -> Any:
+    method = getattr(value, method_name, None)
+    if not callable(method):
+        return _MISSING
+    try:
+        return method()
+    except Exception as exc:
+        if _is_empty_json_parse_error(exc):
+            logger.debug("Ignoring PaddleOCR result %s() empty-payload error: %s", method_name, exc)
+            return _MISSING
+        raise
+
+
 def _normalize_text(value: str) -> str:
     lines = [" ".join(line.strip().split()) for line in str(value or "").splitlines()]
     return "\n".join(line for line in lines if line).strip()
+
+
+def _is_empty_json_parse_error(exc: BaseException) -> bool:
+    message = str(exc or "").lower()
+    return "parse_error.101" in message and "empty input" in message
 
 
 def _hash_text(value: str) -> str:

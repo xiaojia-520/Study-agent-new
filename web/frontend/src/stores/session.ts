@@ -70,7 +70,7 @@ export const useSessionStore = defineStore('session', () => {
   const currentCourseId = computed(() => sessionInfo.value?.course_id || '')
   const currentLessonId = computed(() => sessionInfo.value?.lesson_id || '')
   const recordButtonBusy = computed(
-    () => initializing.value || loadingMicrophones.value || websocketState.value === 'connecting',
+    () => initializing.value || websocketState.value === 'connecting',
   )
   const sessionStageLabel = computed(() => {
     if (recording.value) {

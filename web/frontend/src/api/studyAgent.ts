@@ -81,10 +81,17 @@ async function requestJson<T>(
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(buildApiUrl(path, baseUrl), {
-    ...init,
-    headers,
-  })
+  const requestUrl = buildApiUrl(path, baseUrl)
+  let response: Response
+  try {
+    response = await fetch(requestUrl, {
+      ...init,
+      headers,
+    })
+  } catch (error) {
+    const reason = error instanceof Error && error.message.trim() ? error.message.trim() : 'network error'
+    throw new Error(`${fallbackMessage}: cannot reach backend at ${requestUrl} (${reason})`)
+  }
   const body = await parseResponseBody(response)
 
   if (!response.ok) {

@@ -10,11 +10,16 @@ def has_files(path: Path) -> bool:
     return path.exists() and any(path.iterdir())
 
 
+def has_expected_files(path: Path, expected_files: tuple[str, ...]) -> bool:
+    return path.exists() and all((path / name).exists() for name in expected_files)
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     targets = {
         "embed": root / "models" / "embedding" / "bge-small-zh-v1.5",
         "asr": root / "models" / "asr" / "speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        "asr_streaming": root / "models" / "asr" / "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
         "vad": root / "models" / "vad" / "speech_fsmn_vad_zh-cn-16k-common-pytorch",
         "punc": root / "models" / "punc" / "punc_ct-transformer_cn-en-common-vocab471067-large",
         "yolo_dir": root / "models" / "yolo",
@@ -54,7 +59,19 @@ def main() -> int:
         ms_snapshot_download(model_id, local_dir=str(target_dir))
         print("  - done:", target_dir)
 
-    print("[6/8] Downloading YOLO11 detection model...")
+    print("[6/8] Downloading FunASR streaming model...")
+    streaming_expected_files = ("config.yaml", "configuration.json", "model.pt", "tokens.json")
+    if has_expected_files(targets["asr_streaming"], streaming_expected_files):
+        print("  - skip:", targets["asr_streaming"])
+    else:
+        snapshot_download(
+            repo_id="funasr/paraformer-zh-streaming",
+            local_dir=str(targets["asr_streaming"]),
+            local_dir_use_symlinks=False,
+        )
+        print("  - done:", targets["asr_streaming"])
+
+    print("[7/8] Downloading YOLO11 detection model...")
     if yolo11_weight_path.exists():
         print("  - skip:", yolo11_weight_path)
     else:
@@ -66,7 +83,7 @@ def main() -> int:
         )
         print("  - done:", yolo11_weight_path)
 
-    print("[7/8] Downloading PaddleOCR models...")
+    print("[8/8] Downloading PaddleOCR models...")
     hf_models = [
         ("PaddlePaddle/PP-OCRv5_mobile_det", targets["ocr_det"]),
         ("PaddlePaddle/PP-OCRv5_mobile_rec", targets["ocr_rec"]),
@@ -82,7 +99,7 @@ def main() -> int:
         )
         print("  - done:", target_dir)
 
-    print("[8/8] Downloading Qwen2.5-VL model...")
+    print("[9/9] Downloading Qwen2.5-VL model...")
     if has_files(targets["qwen_vl"]):
         print("  - skip:", targets["qwen_vl"])
     else:
@@ -93,10 +110,12 @@ def main() -> int:
         )
         print("  - done:", targets["qwen_vl"])
 
+
     print("")
     print("Model setup completed.")
     print("Embedding :", targets["embed"])
     print("ASR       :", targets["asr"])
+    print("ASR STREAM:", targets["asr_streaming"])
     print("VAD       :", targets["vad"])
     print("PUNC      :", targets["punc"])
     print("YOLO11    :", yolo11_weight_path)

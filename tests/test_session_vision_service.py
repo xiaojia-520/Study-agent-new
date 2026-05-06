@@ -6,7 +6,7 @@ from threading import Event
 from PIL import Image
 
 from src.domain.session import RealtimeSession
-from web.backend.app.services.session_vision_service import SessionVisionService
+from web.backend.app.services.session_vision_service import LocalPaddleOcrExtractor, SessionVisionService
 
 
 class FakeExtractor:
@@ -47,7 +47,43 @@ class BlockingExtractor:
     def extract_text(self, image):
         self.started.set()
         self.release.wait(timeout=2.0)
-        return "慢速视觉结果"
+        return "slow vision result"
+
+
+class EmptyJsonResult:
+    def json(self):
+        raise RuntimeError(
+            "[json.exception.parse_error.101] parse error at line 1, column 1: "
+            "attempting to parse an empty input; check that your input string or stream contains the expected JSON"
+        )
+
+    def to_dict(self):
+        return {"rec_texts": ["PPT title", "Key points"]}
+
+
+class PredictFailsEngine:
+    def predict(self, array):
+        raise RuntimeError(
+            "[json.exception.parse_error.101] parse error at line 1, column 1: "
+            "attempting to parse an empty input; check that your input string or stream contains the expected JSON"
+        )
+
+    def ocr(self, array, cls=False):
+        return [{"rec_texts": ["fallback result"]}]
+
+
+class PredictEmptyOnlyEngine:
+    def predict(self, array):
+        raise RuntimeError(
+            "[json.exception.parse_error.101] parse error at line 1, column 1: "
+            "attempting to parse an empty input; check that your input string or stream contains the expected JSON"
+        )
+
+    def ocr(self, array, cls=False):
+        raise RuntimeError(
+            "[json.exception.parse_error.101] parse error at line 1, column 1: "
+            "attempting to parse an empty input; check that your input string or stream contains the expected JSON"
+        )
 
 
 class SessionVisionServiceTests(unittest.TestCase):
@@ -56,8 +92,8 @@ class SessionVisionServiceTests(unittest.TestCase):
         indexer = FakeRagIndexer()
         refine_calls = []
         service = SessionVisionService(
-            ocr_extractor=FakeExtractor("PPT标题\n知识点A"),
-            vlm_extractor=FakeExtractor("黑板公式 y = kx + b"),
+            ocr_extractor=FakeExtractor("PPT title\nknowledge point"),
+            vlm_extractor=FakeExtractor("blackboard formula y = kx + b"),
             transcript_writer=writer,
             rag_indexer=indexer,
             refine_scheduler=lambda session_id: refine_calls.append(session_id),
@@ -81,9 +117,9 @@ class SessionVisionServiceTests(unittest.TestCase):
         self.assertEqual(writer.records[0]["metadata"]["region"], "ppt")
         self.assertEqual(writer.records[0]["created_at"], 5)
         self.assertEqual(writer.records[0]["metadata"]["frame_captured_at_ms"], 5000)
-        self.assertIn("PPT标题", writer.records[0]["clean_text"])
+        self.assertIn("PPT title", writer.records[0]["clean_text"])
         self.assertEqual(writer.records[1]["metadata"]["region"], "blackboard")
-        self.assertIn("黑板公式", writer.records[1]["clean_text"])
+        self.assertIn("blackboard formula", writer.records[1]["clean_text"])
         self.assertEqual(len(indexer.records), 2)
         self.assertEqual(refine_calls, ["session-vision"])
 
@@ -91,7 +127,7 @@ class SessionVisionServiceTests(unittest.TestCase):
         writer = FakeTranscriptWriter()
         refine_calls = []
         service = SessionVisionService(
-            ocr_extractor=FakeExtractor("重复PPT"),
+            ocr_extractor=FakeExtractor("duplicate PPT"),
             vlm_extractor=FakeExtractor(""),
             transcript_writer=writer,
             rag_indexer=FakeRagIndexer(),
@@ -141,6 +177,30 @@ class SessionVisionServiceTests(unittest.TestCase):
         worker.join(timeout=2.0)
         self.assertTrue(busy["busy"])
         self.assertEqual(busy["results"][0]["status"], "busy")
+
+    def test_local_paddle_ocr_ignores_empty_json_result_payload(self) -> None:
+        extractor = LocalPaddleOcrExtractor()
+        extractor._engine = type("FakeEngine", (), {"predict": lambda self, array: [EmptyJsonResult()]})()
+
+        text = extractor.extract_text(Image.new("RGB", (64, 64), color=(255, 255, 255)))
+
+        self.assertEqual(text, "PPT title\nKey points")
+
+    def test_local_paddle_ocr_falls_back_to_ocr_when_predict_fails(self) -> None:
+        extractor = LocalPaddleOcrExtractor()
+        extractor._engine = PredictFailsEngine()
+
+        text = extractor.extract_text(Image.new("RGB", (64, 64), color=(255, 255, 255)))
+
+        self.assertEqual(text, "fallback result")
+
+    def test_local_paddle_ocr_treats_empty_json_parse_error_as_empty_text(self) -> None:
+        extractor = LocalPaddleOcrExtractor()
+        extractor._engine = PredictEmptyOnlyEngine()
+
+        text = extractor.extract_text(Image.new("RGB", (64, 64), color=(255, 255, 255)))
+
+        self.assertEqual(text, "")
 
     @staticmethod
     def _session() -> RealtimeSession:

@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     OCR_REC_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_rec"
     OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False
     OCR_USE_DOC_UNWARPING: bool = False
-    OCR_USE_TEXTLINE_ORIENTATION: bool = True
+    OCR_USE_TEXTLINE_ORIENTATION: bool = False
     VLM_MODEL_NAME: Path = VLM_MODEL_DIR / "Qwen2.5-VL-7B-Instruct"
     VLM_DEVICE_MAP: str = "auto"
     VLM_MAX_NEW_TOKENS: int = 512
