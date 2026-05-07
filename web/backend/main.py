@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from config.settings import settings
+from src.core.asr.realtime_models import resolve_realtime_asr_model
 from src.infrastructure.logger import get_logger
 from src.infrastructure.model_hub import model_hub
 from web.backend.app.api.lesson_copilot import router as lesson_copilot_router
@@ -44,10 +46,14 @@ async def warmup_models():
     lesson_asset_service.init_schema()
     session_video_service.init_schema()
     lesson_note_repository.init_schema()
-    logger.info("Backend startup warmup: loading ASR model")
-    model_hub.load_asr_model()
-    logger.info("Backend startup warmup: loading FunASR offline model")
-    model_hub.load_funasr_model()
+    warmup_model = resolve_realtime_asr_model(settings.ASR_DEFAULT_MODEL_KEY)
+    logger.info("Backend startup warmup: loading ASR model %s", warmup_model.key)
+    model_hub.load_asr_model(model_name=warmup_model.resolved_model_name)
+    if settings.ASR_WARMUP_OFFLINE_MODEL:
+        logger.info("Backend startup warmup: loading FunASR offline model")
+        model_hub.load_funasr_model()
+    else:
+        logger.info("Backend startup warmup: skipping FunASR offline model")
     logger.info("Backend startup warmup complete")
 
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import queue
+import threading
+from collections.abc import Iterator
 from typing import Any
 
 from src.application.lesson_copilot import CopilotContext, Executor, LessonCopilotAgent, build_tools
@@ -22,6 +25,7 @@ class LessonCopilotService:
         lesson_id: str,
         message: str,
         session_id: str | None = None,
+        on_step=None,
     ) -> CopilotRunResult:
         llm = self._get_llm()
         agent = LessonCopilotAgent(
@@ -32,7 +36,44 @@ class LessonCopilotService:
         return agent.run(
             CopilotContext(course_id=course_id, lesson_id=lesson_id, session_id=session_id),
             message,
+            on_step=on_step,
         )
+
+    def stream(
+        self,
+        *,
+        course_id: str,
+        lesson_id: str,
+        message: str,
+        session_id: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        events: queue.Queue[dict[str, Any] | None] = queue.Queue()
+
+        def emit_step(step: CopilotStep) -> None:
+            events.put({"event": "step", "data": lesson_copilot_step_to_dict(step)})
+
+        def worker() -> None:
+            try:
+                result = self.run(
+                    course_id=course_id,
+                    lesson_id=lesson_id,
+                    session_id=session_id,
+                    message=message,
+                    on_step=emit_step,
+                )
+                events.put({"event": "done", "data": lesson_copilot_result_to_dict(result)})
+            except Exception as exc:
+                events.put({"event": "error", "data": {"message": str(exc)}})
+            finally:
+                events.put(None)
+
+        threading.Thread(target=worker, daemon=True, name="lesson-copilot-stream").start()
+
+        while True:
+            event = events.get()
+            if event is None:
+                break
+            yield event
 
     def close(self) -> None:
         self._llm = None

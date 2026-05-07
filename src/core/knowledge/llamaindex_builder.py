@@ -70,11 +70,13 @@ def build_vector_metadata(chunk: TranscriptChunk) -> dict[str, object]:
 def build_default_embed_model(
     model_name: str | Path | None = None,
     *,
+    device: str | None = None,
     normalize: bool = True,
     embed_batch_size: int = 32,
 ) -> Any:
     return build_sentence_transformer_embedding(
         model_name=model_name or settings.RAG_EMBED_MODEL_NAME,
+        device=device or settings.RAG_EMBED_DEVICE,
         normalize_embeddings=normalize,
         embed_batch_size=embed_batch_size,
     )

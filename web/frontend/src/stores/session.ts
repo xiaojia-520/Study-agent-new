@@ -40,7 +40,7 @@ import type { LessonSnapshot, LessonSnapshotStatus, RefineStatusToast } from './
 export const useSessionStore = defineStore('session', () => {
   const backendBaseUrl = ref(defaultBackendBaseUrl)
   const subject = ref('Web 开发课堂')
-  const model = ref<ModelKey>('paraformer-zh')
+  const model = ref<ModelKey>('paraformer-zh-streaming')
   const modelOptions = ref<ModelOption[]>([...sessionModelOptions])
   const microphone = ref('default')
   const microphones = ref<MicrophoneOption[]>([{ id: 'default', label: '默认麦克风' }])

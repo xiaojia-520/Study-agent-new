@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
@@ -7,7 +7,7 @@ import {
   fetchLatestLessonNote,
   fetchLessonNote,
   generateLessonNote,
-  runLessonCopilot,
+  runLessonCopilotStream,
 } from '../api/studyAgent'
 import SideBar from '../components/history/SideBar.vue'
 import { useSessionStore } from '../stores/session'
@@ -33,9 +33,25 @@ const copilotSubmittedMessage = ref('')
 const copilotAnswer = ref('')
 const copilotError = ref('')
 const copilotLoading = ref(false)
+const copilotRevealing = ref(false)
 const copilotSteps = ref<LessonCopilotStepItem[]>([])
+const copilotTimelineScrollRef = ref<HTMLElement | null>(null)
 
 let pollTimer: number | null = null
+let copilotRevealTimer: number | null = null
+
+const copilotStorageVersion = 1
+const copilotStepRevealDelayMs = 420
+
+interface SavedCopilotState {
+  version: number
+  message: string
+  submittedMessage: string
+  answer: string
+  error: string
+  steps: LessonCopilotStepItem[]
+  savedAt: number
+}
 
 const notePayload = computed(() => note.value?.note ?? {})
 const keyPoints = computed(() => notePayload.value.key_points ?? [])
@@ -50,7 +66,8 @@ const canGenerate = computed(() => Boolean(selectedCourseId.value && selectedLes
 const canRunCopilot = computed(
   () =>
     Boolean(selectedCourseId.value && selectedLessonId.value && copilotMessage.value.trim()) &&
-    !copilotLoading.value,
+    !copilotLoading.value &&
+    !copilotRevealing.value,
 )
 const canExportMarkdown = computed(() => Boolean(note.value?.markdown?.trim()) && note.value?.status === 'done')
 const copilotTimeline = computed<LessonCopilotTimelineItem[]>(() => {
@@ -107,7 +124,7 @@ const copilotTimeline = computed<LessonCopilotTimelineItem[]>(() => {
     }
   })
 
-  if (!copilotSteps.value.length && copilotAnswer.value.trim()) {
+  if (!copilotRevealing.value && !copilotSteps.value.length && copilotAnswer.value.trim()) {
     items.push({
       kind: 'final',
       key: 'final-answer-only',
@@ -140,18 +157,127 @@ function clearPollTimer(): void {
   }
 }
 
+function clearCopilotRevealTimer(): void {
+  if (copilotRevealTimer !== null) {
+    window.clearTimeout(copilotRevealTimer)
+    copilotRevealTimer = null
+  }
+}
+
+function buildCopilotStorageKey(courseId = selectedCourseId.value, lessonId = selectedLessonId.value): string | null {
+  if (!courseId || !lessonId) {
+    return null
+  }
+  return `study-agent:lesson-copilot:${courseId}:${lessonId}`
+}
+
+function loadSavedCopilotState(courseId: string, lessonId: string): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  const key = buildCopilotStorageKey(courseId, lessonId)
+  if (!key) {
+    return false
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) {
+      return false
+    }
+
+    const payload = JSON.parse(raw) as Partial<SavedCopilotState>
+    if (payload.version !== copilotStorageVersion) {
+      return false
+    }
+
+    copilotMessage.value = typeof payload.message === 'string' ? payload.message : copilotMessage.value
+    copilotSubmittedMessage.value = typeof payload.submittedMessage === 'string' ? payload.submittedMessage : ''
+    copilotAnswer.value = typeof payload.answer === 'string' ? payload.answer : ''
+    copilotError.value = typeof payload.error === 'string' ? payload.error : ''
+    copilotSteps.value = Array.isArray(payload.steps) ? payload.steps : []
+    copilotLoading.value = false
+    copilotRevealing.value = false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function removeSavedCopilotState(courseId = selectedCourseId.value, lessonId = selectedLessonId.value): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const key = buildCopilotStorageKey(courseId, lessonId)
+  if (!key) {
+    return
+  }
+
+  window.localStorage.removeItem(key)
+}
+
+function persistCopilotState(): void {
+  if (typeof window === 'undefined' || copilotLoading.value) {
+    return
+  }
+
+  const key = buildCopilotStorageKey()
+  if (!key) {
+    return
+  }
+
+  const hasCopilotRecord =
+    Boolean(copilotSubmittedMessage.value.trim()) ||
+    Boolean(copilotAnswer.value.trim()) ||
+    Boolean(copilotError.value.trim()) ||
+    copilotSteps.value.length > 0
+
+  if (!hasCopilotRecord) {
+    window.localStorage.removeItem(key)
+    return
+  }
+
+  const payload: SavedCopilotState = {
+    version: copilotStorageVersion,
+    message: copilotMessage.value,
+    submittedMessage: copilotSubmittedMessage.value,
+    answer: copilotAnswer.value,
+    error: copilotError.value,
+    steps: copilotSteps.value,
+    savedAt: Date.now(),
+  }
+  window.localStorage.setItem(key, JSON.stringify(payload))
+}
+
+async function scrollCopilotTimelineToBottom(): Promise<void> {
+  await nextTick()
+  const container = copilotTimelineScrollRef.value
+  if (!container) {
+    return
+  }
+  container.scrollTop = container.scrollHeight
+  container.scrollIntoView({ block: 'end' })
+}
+
 async function selectLesson(item: LessonHistoryItem): Promise<void> {
   clearPollTimer()
+  clearCopilotRevealTimer()
   selectedLesson.value = item
   note.value = null
   statusMessage.value = ''
   errorMessage.value = ''
   focusText.value = ''
-  resetCopilotState()
 
   if (!item.course_id || !item.lesson_id) {
+    resetCopilotState()
     errorMessage.value = '这节课缺少 course_id 或 lesson_id。'
     return
+  }
+
+  if (!loadSavedCopilotState(item.course_id, item.lesson_id)) {
+    resetCopilotState()
   }
 
   await loadLatestNote(item.course_id, item.lesson_id)
@@ -172,6 +298,8 @@ async function loadLatestNote(courseId: string, lessonId: string): Promise<void>
     const message = error instanceof Error ? error.message : '获取课后笔记失败。'
     if (message.includes('not found')) {
       note.value = null
+      removeSavedCopilotState(courseId, lessonId)
+      resetCopilotState()
       statusMessage.value = '这节课还没有生成过课后笔记。'
     } else {
       errorMessage.value = message
@@ -254,11 +382,45 @@ function updateStatusFromNote(item: LessonNoteItem): void {
 }
 
 function resetCopilotState(): void {
+  clearCopilotRevealTimer()
   copilotSubmittedMessage.value = ''
   copilotAnswer.value = ''
   copilotError.value = ''
   copilotLoading.value = false
+  copilotRevealing.value = false
   copilotSteps.value = []
+}
+
+function revealCopilotSteps(steps: LessonCopilotStepItem[]): void {
+  clearCopilotRevealTimer()
+  copilotSteps.value = []
+  copilotRevealing.value = steps.length > 0
+
+  let index = 0
+  const revealNext = () => {
+    if (index >= steps.length) {
+      copilotRevealTimer = null
+      copilotRevealing.value = false
+      persistCopilotState()
+      void scrollCopilotTimelineToBottom()
+      return
+    }
+
+    const step = steps[index]
+    if (!step) {
+      copilotRevealTimer = null
+      copilotRevealing.value = false
+      persistCopilotState()
+      return
+    }
+
+    copilotSteps.value = [...copilotSteps.value, step]
+    index += 1
+    void scrollCopilotTimelineToBottom()
+    copilotRevealTimer = window.setTimeout(revealNext, copilotStepRevealDelayMs)
+  }
+
+  copilotRevealTimer = window.setTimeout(revealNext, 120)
 }
 
 async function askCopilot(): Promise<void> {
@@ -267,30 +429,49 @@ async function askCopilot(): Promise<void> {
   }
 
   copilotLoading.value = true
+  copilotRevealing.value = false
   copilotError.value = ''
   copilotAnswer.value = ''
   copilotSteps.value = []
   copilotSubmittedMessage.value = copilotMessage.value.trim()
+  clearCopilotRevealTimer()
 
   try {
-    const response = await runLessonCopilot(
+    let streamedStepCount = 0
+    const response = await runLessonCopilotStream(
       selectedCourseId.value,
       selectedLessonId.value,
       {
         message: copilotMessage.value.trim(),
         session_id: selectedLesson.value?.last_session_id || undefined,
       },
+      {
+        onStep: (step) => {
+          streamedStepCount += 1
+          copilotSteps.value = [...copilotSteps.value, step]
+          void scrollCopilotTimelineToBottom()
+        },
+        onError: (message) => {
+          copilotError.value = message
+        },
+      },
       backendBaseUrl.value,
     )
     copilotAnswer.value = response.answer
-    copilotSteps.value = response.steps
+    if (streamedStepCount === 0) {
+      revealCopilotSteps(response.steps)
+    } else {
+      copilotSteps.value = response.steps
+    }
     if (response.steps.some((step) => step.tool_name === 'generate_lesson_note' && step.tool_ok)) {
       await refreshLatestNote()
     }
   } catch (error) {
     copilotError.value = error instanceof Error ? error.message : 'Lesson copilot request failed.'
+    persistCopilotState()
   } finally {
     copilotLoading.value = false
+    persistCopilotState()
   }
 }
 
@@ -355,8 +536,25 @@ function exportMarkdown(): void {
   URL.revokeObjectURL(objectUrl)
 }
 
+watch(
+  () => [copilotTimeline.value.length, copilotLoading.value, copilotRevealing.value],
+  () => {
+    void scrollCopilotTimelineToBottom()
+  },
+  { flush: 'post' },
+)
+
+watch(
+  () => copilotMessage.value,
+  () => {
+    persistCopilotState()
+  },
+)
+
 onBeforeUnmount(() => {
   clearPollTimer()
+  clearCopilotRevealTimer()
+  persistCopilotState()
 })
 </script>
 
@@ -392,7 +590,7 @@ onBeforeUnmount(() => {
       <div class="grid h-full min-h-0 gap-3 lg:grid-cols-[360px_1fr]">
         <SideBar class="min-h-0" @select="selectLesson" />
 
-        <section class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))]">
+        <section class="flex min-h-0 flex-col overflow-y-auto rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))]">
           <template v-if="selectedLesson">
             <div class="shrink-0 border-b border-[rgba(var(--line-soft),0.08)] p-5">
               <div class="flex flex-wrap items-start justify-between gap-4">
@@ -506,12 +704,15 @@ onBeforeUnmount(() => {
                   {{ copilotError }}
                 </p>
 
-                <div v-if="copilotLoading || copilotTimeline.length" class="mt-4 rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-4">
+                <div
+                  v-if="copilotLoading || copilotRevealing || copilotTimeline.length"
+                  class="mt-4 rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-4"
+                >
                   <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--text-faint))]">
                     Copilot Timeline
                   </p>
 
-                  <div class="mt-3 space-y-3">
+                  <div ref="copilotTimelineScrollRef" class="mt-3 space-y-3 pr-1">
                     <article
                       v-for="item in copilotTimeline"
                       :key="item.key"
@@ -564,7 +765,7 @@ onBeforeUnmount(() => {
                           <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
                             Arguments
                           </summary>
-                          <pre class="mt-2 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.arguments) }}</pre>
+                          <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.arguments) }}</pre>
                         </details>
                         <details
                           v-if="item.step.tool_result"
@@ -573,7 +774,7 @@ onBeforeUnmount(() => {
                           <summary class="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
                             Result
                           </summary>
-                          <pre class="mt-2 overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.tool_result) }}</pre>
+                          <pre class="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ formatJson(item.step.tool_result) }}</pre>
                         </details>
                         <p v-if="item.step.error" class="text-xs text-[rgb(var(--danger))]">
                           {{ item.step.error }}
@@ -582,7 +783,7 @@ onBeforeUnmount(() => {
                     </article>
 
                     <article
-                      v-if="copilotLoading"
+                      v-if="copilotLoading || copilotRevealing"
                       class="rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-base))] px-4 py-3"
                     >
                       <div class="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-[rgb(var(--text-faint))]">
@@ -597,7 +798,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="min-h-0 flex-1 overflow-y-auto p-5">
+            <div class="shrink-0 p-5">
               <div v-if="loadingLatest && !note" class="space-y-3">
                 <div
                   v-for="index in 6"

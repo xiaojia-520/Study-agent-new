@@ -218,6 +218,12 @@ export interface LessonCopilotResponse {
   metadata: Record<string, unknown>
 }
 
+export interface LessonCopilotStreamHandlers {
+  onStep?: (step: LessonCopilotStepItem) => void
+  onDone?: (response: LessonCopilotResponse) => void
+  onError?: (message: string) => void
+}
+
 export interface LessonCopilotPayload {
   message: string
   session_id?: string | null

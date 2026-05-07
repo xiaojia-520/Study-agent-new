@@ -48,6 +48,7 @@ export function createRealtimeAudioActions(args: {
   let mediaSourceNode: MediaStreamAudioSourceNode | null = null
   let processorNode: ScriptProcessorNode | null = null
   let muteGainNode: GainNode | null = null
+  const audioProcessorBufferSize = 2048
 
   const socketClient = new RealtimeSocketClient({
     onEvent: handleRealtimeEvent,
@@ -128,7 +129,7 @@ export function createRealtimeAudioActions(args: {
       await audioContext.resume()
 
       mediaSourceNode = audioContext.createMediaStreamSource(mediaStream)
-      processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+      processorNode = audioContext.createScriptProcessor(audioProcessorBufferSize, 1, 1)
       muteGainNode = audioContext.createGain()
       muteGainNode.gain.value = 0
       recording.value = true

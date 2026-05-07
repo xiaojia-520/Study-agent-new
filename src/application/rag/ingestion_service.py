@@ -80,12 +80,12 @@ class KnowledgeIngestionService:
         session: RealtimeSession,
         record: Mapping[str, Any] | TranscriptRecord,
     ) -> None:
-        if self.realtime_indexer is None:
+        if not self.rag_indexing_enabled or self.realtime_indexer is None:
             return
         self.realtime_indexer.append_record(session, record)
 
     def flush_session(self, session_id: str) -> None:
-        if self.realtime_indexer is None:
+        if not self.rag_indexing_enabled or self.realtime_indexer is None:
             return
         flush_session = getattr(self.realtime_indexer, "flush_session", None)
         if callable(flush_session):

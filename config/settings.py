@@ -40,14 +40,18 @@ class Settings(BaseSettings):
         "paraformer-zh-streaming": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
         "paraformer-zh-streaming-2pass": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
     }
-    ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh"
+    ASR_DEVICE: str = "cuda"
+    ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh-streaming"
+    ASR_OFFLINE_MODEL_KEY: str = "paraformer-zh"
+    ASR_WARMUP_OFFLINE_MODEL: bool = True
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR
-    ASR_MODEL_NAME: str = str(ASR_LOCAL_MODEL_PATH / ASR_MODEL_PATH[ASR_DEFAULT_MODEL_KEY])
+    ASR_MODEL_NAME: str = str(ASR_LOCAL_MODEL_PATH / ASR_MODEL_PATH[ASR_OFFLINE_MODEL_KEY])
 
     VAD_MODEL_NAME: str = str(VAD_MODEL_DIR / "speech_fsmn_vad_zh-cn-16k-common-pytorch")
     PUNC_MODEL_NAME: str = str(PUNC_MODEL_DIR / "punc_ct-transformer_cn-en-common-vocab471067-large")
 
     EMBED_MODEL_NAME: Path = EMBED_MODEL_DIR / "bge-small-zh-v1.5"
+    EMBED_DEVICE: str = "cuda"
     OCR_DET_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_det"
     OCR_REC_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_rec"
     OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False
@@ -66,6 +70,7 @@ class Settings(BaseSettings):
 
     RAG_TRANSCRIPT_ROOT: Path = TRANSCRIPT_SAVE_DIR
     RAG_EMBED_MODEL_NAME: Path = EMBED_MODEL_NAME
+    RAG_EMBED_DEVICE: str = EMBED_DEVICE
     RAG_QDRANT_COLLECTION: str = "speech_transcript_chunks"
     RAG_QDRANT_PREFER_LOCAL: bool = True
     RAG_QDRANT_LOCAL_PATH: Path = _ensure_dir(QDRANT_LOCAL_DIR / "speech_transcript_chunks")

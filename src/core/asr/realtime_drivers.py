@@ -220,6 +220,7 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
         super().on_chunk(chunk)
 
     def on_end(self) -> None:
+        started_at = time.monotonic()
         full_audio = self.full_buf.pop_all()
         streaming_final = self._finish_streaming_pass()
         second_pass_text = self._run_second_pass(full_audio)
@@ -235,16 +236,17 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
 
         self.buf.clear()
         self.full_buf.clear()
-        logger.info("VAD end -> paraformer-zh-streaming-2pass")
+        logger.info("VAD end -> paraformer-zh-streaming-2pass elapsed=%.3fs", time.monotonic() - started_at)
 
     def _finish_streaming_pass(self) -> str:
         remaining = self.buf.pop_all()
         if remaining.size <= 0:
             return ""
         try:
+            started_at = time.monotonic()
             final_text = self.asr.transcribe_stream(remaining, is_final=True)
             if final_text:
-                logger.info(f"ASR(2pass-online-final): {final_text}")
+                logger.info("ASR(2pass-online-final) elapsed=%.3fs: %s", time.monotonic() - started_at, final_text)
             return final_text or ""
         except Exception as exc:
             logger.error(f"2pass online final failed: {exc}")
@@ -254,9 +256,10 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
         if full_audio.size <= 0:
             return ""
         try:
+            started_at = time.monotonic()
             final_text = self.asr.transcribe_offline_with_punc(full_audio)
             if final_text:
-                logger.info(f"ASR(2pass-offline): {final_text}")
+                logger.info("ASR(2pass-offline) elapsed=%.3fs: %s", time.monotonic() - started_at, final_text)
             return final_text or ""
         except Exception as exc:
             logger.error(f"2pass offline correction failed: {exc}")

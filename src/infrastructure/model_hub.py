@@ -9,6 +9,19 @@ from src.infrastructure.logger import get_logger
 logger = get_logger("ModelHub")
 
 
+def _resolve_device(requested: str | None) -> str:
+    device = (requested or "").strip().lower()
+    if device and device != "auto":
+        return device
+
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 class ModelHub:
     _instance = None
     _asr_models = {}
@@ -27,11 +40,17 @@ class ModelHub:
 
     def load_asr_model(self, model_name: str | None = None):
         resolved_model_name = model_name or settings.ASR_MODEL_NAME
+        resolved_device = _resolve_device(settings.ASR_DEVICE)
         with self._asr_lock:
             model = self._asr_models.get(resolved_model_name)
             if model is None:
-                logger.info(f"Loading ASR model: {resolved_model_name}")
-                model = AutoModel(model=resolved_model_name, trust_remote_code=True, disable_update=True)
+                logger.info(f"Loading ASR model: {resolved_model_name} on device={resolved_device}")
+                model = AutoModel(
+                    model=resolved_model_name,
+                    trust_remote_code=True,
+                    disable_update=True,
+                    device=resolved_device,
+                )
                 self._asr_models[resolved_model_name] = model
                 logger.info("ASR model loaded")
         return model
@@ -45,8 +64,9 @@ class ModelHub:
 
     def load_embed_model(self):
         if self._embed_model is None:
-            logger.info(f"Loading embed model: {settings.EMBED_MODEL_NAME}")
-            self._embed_model = SentenceTransformer(settings.EMBED_MODEL_NAME)
+            resolved_device = _resolve_device(settings.EMBED_DEVICE)
+            logger.info(f"Loading embed model: {settings.EMBED_MODEL_NAME} on device={resolved_device}")
+            self._embed_model = SentenceTransformer(settings.EMBED_MODEL_NAME, device=resolved_device)
             logger.info("Embed model loaded")
         return self._embed_model
 
@@ -59,13 +79,15 @@ class ModelHub:
 
     def load_funasr_model(self):
         if self.funasr_model is None:
-            logger.info("Loading FunASR offline model with punc/vad")
+            resolved_device = _resolve_device(settings.ASR_DEVICE)
+            logger.info(f"Loading FunASR offline model with punc/vad on device={resolved_device}")
             self.funasr_model = AutoModel(
                 model=settings.ASR_MODEL_NAME,
                 vad_model=settings.VAD_MODEL_NAME,
                 punc_model=settings.PUNC_MODEL_NAME,
                 sentence_timestamp=True,
                 disable_update=True,
+                device=resolved_device,
             )
             logger.info("FunASR offline model loaded")
         return self.funasr_model

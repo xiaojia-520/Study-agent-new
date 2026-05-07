@@ -1,5 +1,6 @@
 import json
 import re
+from typing import Callable
 
 from src.application.lesson_copilot.executor import Executor
 from src.application.lesson_copilot.prompts import build_decision_prompt
@@ -12,7 +13,12 @@ class LessonCopilotAgent:
         self.executor = executor
         self.max_steps = max_steps
 
-    def run(self, context: CopilotContext, user_message: str) -> CopilotRunResult:
+    def run(
+        self,
+        context: CopilotContext,
+        user_message: str,
+        on_step: Callable[[CopilotStep], None] | None = None,
+    ) -> CopilotRunResult:
         tool_results: list[ToolResult] = []
         steps: list[CopilotStep] = []
 
@@ -28,13 +34,17 @@ class LessonCopilotAgent:
             try:
                 decision = self._parse_decision(raw_text)
             except (json.JSONDecodeError, ValueError) as exc:
-                steps.append(CopilotStep(action="error", error=f"Failed to parse LLM decision JSON: {exc}"))
+                self._append_step(
+                    steps,
+                    CopilotStep(action="error", error=f"Failed to parse LLM decision JSON: {exc}"),
+                    on_step,
+                )
                 answer = self._fallback_answer(tool_results)
                 if not tool_results:
                     recovered = self._recover_answer_from_invalid_decision(raw_text)
                     if recovered:
                         answer = recovered
-                steps.append(CopilotStep(action="final", final_answer=answer))
+                self._append_step(steps, CopilotStep(action="final", final_answer=answer), on_step)
                 return CopilotRunResult(
                     answer=answer,
                     steps=tuple(steps),
@@ -54,7 +64,8 @@ class LessonCopilotAgent:
                 )
                 result = self.executor.execute(call)
                 tool_results.append(result)
-                steps.append(
+                self._append_step(
+                    steps,
                     CopilotStep(
                         action="tool",
                         thought=thought,
@@ -63,13 +74,18 @@ class LessonCopilotAgent:
                         tool_ok=result.ok,
                         tool_result=result.content if result.ok else None,
                         error=result.error,
-                    )
+                    ),
+                    on_step,
                 )
                 continue
 
             if action == "final":
                 answer = str(decision.get("final_answer") or "").strip() or self._fallback_answer(tool_results)
-                steps.append(CopilotStep(action="final", thought=thought, final_answer=answer))
+                self._append_step(
+                    steps,
+                    CopilotStep(action="final", thought=thought, final_answer=answer),
+                    on_step,
+                )
                 return CopilotRunResult(
                     answer=answer,
                     steps=tuple(steps),
@@ -79,11 +95,15 @@ class LessonCopilotAgent:
                     },
                 )
 
-            steps.append(CopilotStep(action="error", thought=thought, error=f"Unsupported action: {action or '<empty>'}"))
+            self._append_step(
+                steps,
+                CopilotStep(action="error", thought=thought, error=f"Unsupported action: {action or '<empty>'}"),
+                on_step,
+            )
             break
 
         answer = self._fallback_answer(tool_results)
-        steps.append(CopilotStep(action="final", final_answer=answer))
+        self._append_step(steps, CopilotStep(action="final", final_answer=answer), on_step)
         return CopilotRunResult(
             answer=answer,
             steps=tuple(steps),
@@ -103,6 +123,16 @@ class LessonCopilotAgent:
 
         payload = json.loads(text)
         return payload
+
+    @staticmethod
+    def _append_step(
+        steps: list[CopilotStep],
+        step: CopilotStep,
+        on_step: Callable[[CopilotStep], None] | None,
+    ) -> None:
+        steps.append(step)
+        if on_step is not None:
+            on_step(step)
 
     @staticmethod
     def _strip_code_fences(text: str) -> str:

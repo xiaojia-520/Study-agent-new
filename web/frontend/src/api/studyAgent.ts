@@ -3,6 +3,7 @@ import type {
   DeleteLessonHistoryResponse,
   LessonCopilotPayload,
   LessonCopilotResponse,
+  LessonCopilotStreamHandlers,
   GenerateLessonNotePayload,
   GenerateLessonNoteResponse,
   LessonAssetListResponse,
@@ -407,6 +408,112 @@ export function runLessonCopilot(
     'Lesson copilot request failed',
     baseUrl,
   )
+}
+
+export async function runLessonCopilotStream(
+  courseId: string,
+  lessonId: string,
+  payload: LessonCopilotPayload,
+  handlers: LessonCopilotStreamHandlers = {},
+  baseUrl = defaultBackendBaseUrl,
+): Promise<LessonCopilotResponse> {
+  const requestUrl = buildApiUrl(
+    `/lessons/${encodeURIComponent(courseId)}/${encodeURIComponent(lessonId)}/copilot/stream`,
+    baseUrl,
+  )
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return runLessonCopilot(courseId, lessonId, payload, baseUrl)
+    }
+    const body = await parseResponseBody(response)
+    throw new Error(extractErrorMessage(body, 'Lesson copilot request failed', response.status))
+  }
+  if (!response.body) {
+    return runLessonCopilot(courseId, lessonId, payload, baseUrl)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResponse: LessonCopilotResponse | null = null
+  let streamError = ''
+
+  const dispatchEvent = (frame: string) => {
+    const lines = frame.split(/\r?\n/)
+    let eventName = 'message'
+    const dataLines: string[] = []
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim()
+        continue
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart())
+      }
+    }
+
+    if (!dataLines.length) {
+      return
+    }
+
+    const data = JSON.parse(dataLines.join('\n')) as unknown
+    if (eventName === 'step') {
+      handlers.onStep?.(data as LessonCopilotResponse['steps'][number])
+      return
+    }
+    if (eventName === 'done') {
+      finalResponse = data as LessonCopilotResponse
+      handlers.onDone?.(finalResponse)
+      return
+    }
+    if (eventName === 'error') {
+      const payload = data as { message?: unknown }
+      streamError = typeof payload.message === 'string' ? payload.message : 'Lesson copilot request failed'
+      handlers.onError?.(streamError)
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary).trim()
+      buffer = buffer.slice(boundary + 2)
+      if (frame) {
+        dispatchEvent(frame)
+      }
+      boundary = buffer.indexOf('\n\n')
+    }
+
+    if (done) {
+      break
+    }
+  }
+
+  const tail = buffer.trim()
+  if (tail) {
+    dispatchEvent(tail)
+  }
+
+  if (streamError) {
+    throw new Error(streamError)
+  }
+  if (!finalResponse) {
+    throw new Error('Lesson copilot stream ended without a final response.')
+  }
+  return finalResponse
 }
 
 export function querySession(
