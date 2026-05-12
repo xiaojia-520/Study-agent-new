@@ -10,6 +10,8 @@ def _ensure_dir(path: Path) -> Path:
 
 class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
+    WEB_HOST: str = "::"
+    WEB_PORT: int = 8000
 
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
     TRANSCRIPT_SAVE_DIR: Path = _ensure_dir(DATA_DIR / "transcripts")

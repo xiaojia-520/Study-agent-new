@@ -72,3 +72,14 @@ async def shutdown_runtime():
 @app.get("/")
 async def root():
     return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "web.backend.main:app",
+        host=settings.WEB_HOST,
+        port=settings.WEB_PORT,
+        reload=True,
+    )

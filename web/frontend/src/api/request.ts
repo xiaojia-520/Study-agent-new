@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+import { defaultBackendBaseUrl } from './studyAgent'
+
 const request = axios.create({
-  baseURL: 'http://127.0.0.1:5000',
+  baseURL: defaultBackendBaseUrl,
   timeout: 5000,
 })
 

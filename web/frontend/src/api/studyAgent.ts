@@ -22,8 +22,18 @@ import type {
   VisionRegion,
 } from '../types/study'
 
-export const defaultBackendBaseUrl =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || 'http://127.0.0.1:8000'
+function resolveDefaultBackendBaseUrl(): string {
+  const configuredBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
+  if (configuredBaseUrl) {
+    return configuredBaseUrl
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin
+  }
+  return 'http://[::1]:8000'
+}
+
+export const defaultBackendBaseUrl = resolveDefaultBackendBaseUrl()
 
 function normalizeBaseUrl(baseUrl = defaultBackendBaseUrl): string {
   const trimmed = baseUrl.trim()
