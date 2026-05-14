@@ -1,26 +1,36 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
 import { useRagChatStore } from '../stores/ragChat'
+import { useSessionStore } from '../stores/session'
 
 const ragChatStore = useRagChatStore()
+const sessionStore = useSessionStore()
 const {
   chatMessages,
   currentQuestion,
   errorMessage,
   includeRagContext,
   retrievalResults,
+  selectedAssetIds,
   sending,
 } = storeToRefs(ragChatStore)
+const { assetList } = storeToRefs(sessionStore)
 
 const scrollContainerRef = ref<HTMLElement | null>(null)
+const showAssetPicker = ref(false)
+
+const readyAssets = computed(() => assetList.value.filter((asset) => asset.status === 'done'))
+const selectedAssetCount = computed(() => selectedAssetIds.value.length)
 
 const contextSummary = computed(() =>
-  includeRagContext.value
-    ? retrievalResults.value.length > 0
-      ? `RAG 已开启 · ${retrievalResults.value.length} 条检索结果`
-      : 'RAG 已开启 · 等待检索结果'
+  selectedAssetCount.value > 0
+    ? `资料 RAG · 已选 ${selectedAssetCount.value} 个文件`
+    : includeRagContext.value
+      ? retrievalResults.value.length > 0
+        ? `课堂 RAG · ${retrievalResults.value.length} 条检索结果`
+        : '课堂 RAG · 等待检索结果'
     : '纯 LLM 模式',
 )
 
@@ -34,6 +44,14 @@ function formatTimestamp(timestamp: number): string {
 async function submitQuestion(): Promise<void> {
   await ragChatStore.sendCurrentQuestion()
 }
+
+function isAssetSelected(assetId: string): boolean {
+  return selectedAssetIds.value.includes(assetId)
+}
+
+onMounted(() => {
+  void sessionStore.refreshLessonAssets()
+})
 
 watch(
   () => chatMessages.value.length,
@@ -73,6 +91,46 @@ watch(
       />
       <span>RAG 检索加入 prompt</span>
     </label>
+
+    <div class="mt-3 rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.1)] bg-[rgb(var(--bg-base))] p-3">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <p class="text-sm font-semibold text-[rgb(var(--text-main))]">资料 RAG</p>
+          <p class="text-xs text-[rgb(var(--text-faint))]">
+            {{ selectedAssetCount ? `已选择 ${selectedAssetCount} 个文件` : '选择已入库资料参与问答' }}
+          </p>
+        </div>
+        <button
+          type="button"
+          class="shrink-0 rounded-[var(--radius-soft)] bg-[rgba(var(--accent),0.12)] px-3 py-2 text-sm font-semibold text-[rgb(var(--accent))] transition hover:bg-[rgba(var(--accent),0.18)]"
+          @click="showAssetPicker = !showAssetPicker"
+        >
+          {{ showAssetPicker ? '收起' : '选择资料' }}
+        </button>
+      </div>
+
+      <div v-if="showAssetPicker" class="mt-3 max-h-36 space-y-2 overflow-y-auto pr-1">
+        <label
+          v-for="asset in readyAssets"
+          :key="asset.asset_id"
+          class="flex cursor-pointer items-start gap-2 rounded-[var(--radius-soft)] bg-[rgba(var(--bg-muted),0.68)] px-3 py-2 text-sm"
+        >
+          <input
+            type="checkbox"
+            class="mt-1 h-4 w-4 rounded border-[rgba(var(--line-soft),0.2)] text-[rgb(var(--accent))] focus:ring-[rgba(var(--accent),0.2)]"
+            :checked="isAssetSelected(asset.asset_id)"
+            @change="ragChatStore.toggleSelectedAsset(asset.asset_id)"
+          />
+          <span class="min-w-0">
+            <span class="block truncate font-medium text-[rgb(var(--text-main))]">{{ asset.file_name }}</span>
+            <span class="text-xs text-[rgb(var(--text-faint))]">{{ asset.record_count }} records</span>
+          </span>
+        </label>
+        <p v-if="!readyAssets.length" class="text-sm text-[rgb(var(--text-faint))]">
+          暂无已入库资料。先在左侧上传资料，解析完成后可选择。
+        </p>
+      </div>
+    </div>
 
     <div
       ref="scrollContainerRef"

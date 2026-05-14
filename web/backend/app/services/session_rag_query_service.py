@@ -122,6 +122,14 @@ _RECENT_TIMELINE_TERMS = (
     "last few lines",
 )
 
+_RECENT_CONTEXT_SECTION_KEYS = (
+    "speech_transcripts",
+    "ocr_context",
+    "vlm_context",
+)
+
+_FINAL_TRANSCRIPT_ROLES = {"final", "final_subtitle"}
+
 
 class SessionRagQueryService:
     def __init__(
@@ -132,11 +140,11 @@ class SessionRagQueryService:
         session_getter=session_manager.get_session,
         transcript_loader=transcript_service.list_session_transcripts,
         lesson_transcript_loader=transcript_service.list_lesson_transcripts,
-        recent_transcript_limit: int = 3,
+        recent_transcript_limit: int = 200,
         recent_classroom_context_limit: int = 200,
         recent_lesson_window_limit: int = 8,
         memory_service: ChatMemoryService | None = None,
-        memory_turn_limit: int = 6,
+        memory_turn_limit: int = 20,
         memory_search_turn_limit: int = 2,
     ) -> None:
         self.runtime_factory = runtime_factory or _build_runtime
@@ -163,6 +171,7 @@ class SessionRagQueryService:
         with_llm: bool = False,
         include_rag_context: bool = False,
         classroom_context_mode: ClassroomContextMode | str = ClassroomContextMode.SESSION,
+        asset_ids: list[str] | tuple[str, ...] | None = None,
     ) -> KnowledgeAnswer:
         session = self.session_getter(session_id)
         if session is None:
@@ -186,9 +195,14 @@ class SessionRagQueryService:
                 raise ValueError("LLM is not enabled. Set RAG_ENABLE_LLM=true and configure a provider first.")
 
         clean_query = self._clean_query_text(query_text)
+        selected_asset_ids = self._normalize_asset_ids(asset_ids)
         conversation_history = self._get_memory_snapshot(session)
         search_query = self._build_memory_augmented_query(clean_query, conversation_history)
-        filters = self.build_scope_filters(session, resolved_scope)
+        filters = self.build_query_filters(
+            session,
+            resolved_scope,
+            asset_ids=selected_asset_ids,
+        )
         results: list[SearchResult] = []
         citations: list[AnswerCitation] = []
 
@@ -205,6 +219,8 @@ class SessionRagQueryService:
         metadata["memory_turn_count"] = len(conversation_history)
         metadata["memory_scope"] = "lesson"
         metadata["classroom_context_mode"] = resolved_context_mode.value
+        metadata["selected_asset_ids"] = selected_asset_ids
+        metadata["selected_asset_count"] = len(selected_asset_ids)
         if search_query != clean_query:
             metadata["memory_augmented_query"] = search_query
 
@@ -229,7 +245,7 @@ class SessionRagQueryService:
             self._remember_turn(session, clean_query, answer)
             return answer
 
-        recent_transcripts: list[str] = []
+        recent_prompt_context = self._empty_recent_prompt_context()
         recent_classroom_context: list[str] = []
         if include_rag_context:
             results = runtime.query_service.search(
@@ -239,12 +255,15 @@ class SessionRagQueryService:
                 filters=filters,
             )
             citations = self._build_citations(results)
-            recent_transcripts = self._load_recent_transcript_texts(
+            recent_prompt_context = self._load_recent_prompt_context(
                 session,
                 session_id=session_id,
                 context_mode=resolved_context_mode,
             )
-            metadata["recent_transcript_count"] = len(recent_transcripts)
+            metadata["recent_transcript_count"] = self._count_recent_prompt_context(recent_prompt_context)
+            metadata["recent_speech_transcript_count"] = len(recent_prompt_context["speech_transcripts"])
+            metadata["recent_ocr_context_count"] = len(recent_prompt_context["ocr_context"])
+            metadata["recent_vlm_context_count"] = len(recent_prompt_context["vlm_context"])
             metadata["answer_prompt_version"] = "cited-answer-v3"
         else:
             results, recent_classroom_context, direct_context_metadata = self._build_direct_classroom_context(
@@ -256,12 +275,18 @@ class SessionRagQueryService:
                 filters=filters,
                 top_k=resolved_top_k,
                 context_mode=resolved_context_mode,
+                force_retrieval=bool(selected_asset_ids),
             )
             metadata.update(direct_context_metadata)
             metadata["recent_classroom_context_count"] = len(recent_classroom_context)
             metadata["answer_prompt_version"] = "direct-answer-v3"
 
-        if include_rag_context and not citations and not recent_transcripts and not conversation_history:
+        if (
+            include_rag_context
+            and not citations
+            and self._count_recent_prompt_context(recent_prompt_context) == 0
+            and not conversation_history
+        ):
             metadata["answer_strategy"] = "no_context"
             metadata["llm_used"] = False
             answer = KnowledgeAnswer(
@@ -281,7 +306,7 @@ class SessionRagQueryService:
                 subject=getattr(session, "subject", None),
                 scope=resolved_scope,
                 citations=citations,
-                recent_transcripts=recent_transcripts,
+                recent_prompt_context=recent_prompt_context,
                 recent_classroom_context=recent_classroom_context,
                 conversation_history=conversation_history,
                 include_rag_context=include_rag_context,
@@ -353,6 +378,24 @@ class SessionRagQueryService:
             )
         )
 
+    def build_query_filters(
+        self,
+        session: RealtimeSession,
+        scope: QueryScope | str,
+        *,
+        asset_ids: list[str] | tuple[str, ...] | None = None,
+    ) -> MetadataFilterSpec | None:
+        normalized_asset_ids = self._normalize_asset_ids(asset_ids)
+        if normalized_asset_ids:
+            return MetadataFilterSpec(
+                clauses=tuple(
+                    MetadataFilterClause("asset_id", asset_id)
+                    for asset_id in normalized_asset_ids
+                ),
+                condition="or",
+            )
+        return self.build_scope_filters(session, scope)
+
     def close(self) -> None:
         if callable(self.runtime_closer):
             self.runtime_closer()
@@ -378,6 +421,18 @@ class SessionRagQueryService:
         if not clean_query:
             raise ValueError("query_text is required")
         return clean_query
+
+    @staticmethod
+    def _normalize_asset_ids(asset_ids: list[str] | tuple[str, ...] | None) -> list[str]:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for value in asset_ids or []:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
 
     @staticmethod
     def _normalize_query_text(query_text: str) -> str:
@@ -443,6 +498,9 @@ class SessionRagQueryService:
             "include_rag_context": include_rag_context,
             "citation_count": citation_count,
             "recent_transcript_count": 0,
+            "recent_speech_transcript_count": 0,
+            "recent_ocr_context_count": 0,
+            "recent_vlm_context_count": 0,
             "retrieved_classroom_context_count": 0,
             "recent_lesson_window_count": 0,
             "memory_turn_count": 0,
@@ -458,7 +516,7 @@ class SessionRagQueryService:
         subject: str | None,
         scope: QueryScope,
         citations: list[AnswerCitation],
-        recent_transcripts: list[str],
+        recent_prompt_context: dict[str, list[str]],
         recent_classroom_context: list[str],
         conversation_history: list[ChatMemoryTurn],
         include_rag_context: bool,
@@ -468,7 +526,9 @@ class SessionRagQueryService:
                 question=query_text,
                 scope_label=_SCOPE_LABELS[scope],
                 citations=citations,
-                recent_transcripts=recent_transcripts,
+                recent_speech_transcripts=recent_prompt_context["speech_transcripts"],
+                recent_ocr_context=recent_prompt_context["ocr_context"],
+                recent_vlm_context=recent_prompt_context["vlm_context"],
                 conversation_history=[(turn.user, turn.assistant) for turn in conversation_history],
             )
         else:
@@ -544,23 +604,23 @@ class SessionRagQueryService:
         blocks.append(f"Current question:\n{query_text}")
         return "\n".join(blocks)
 
-    def _load_recent_transcript_texts(
+    def _load_recent_prompt_context(
         self,
         session: RealtimeSession,
         *,
         session_id: str,
         context_mode: ClassroomContextMode = ClassroomContextMode.SESSION,
-    ) -> list[str]:
+    ) -> dict[str, list[str]]:
         if self.recent_transcript_limit <= 0:
-            return []
+            return self._empty_recent_prompt_context()
 
         items = self._load_transcript_items(session, session_id=session_id, context_mode=context_mode)
-        texts: list[str] = []
-        for item in items:
-            text = self._extract_transcript_text(item)
+        classified_items = self._empty_recent_prompt_context()
+        for item in items[-self.recent_transcript_limit :]:
+            text, kind = self._extract_recent_prompt_text_and_kind(item)
             if text:
-                texts.append(text)
-        return texts[-self.recent_transcript_limit:]
+                classified_items[kind].append(text)
+        return classified_items
 
     def _load_recent_classroom_context(
         self,
@@ -594,8 +654,9 @@ class SessionRagQueryService:
         filters: MetadataFilterSpec | None,
         top_k: int,
         context_mode: ClassroomContextMode,
+        force_retrieval: bool = False,
     ) -> tuple[list[SearchResult], list[str], dict[str, Any]]:
-        if context_mode is ClassroomContextMode.SESSION:
+        if context_mode is ClassroomContextMode.SESSION and not force_retrieval:
             return [], self._load_recent_classroom_context(session, session_id=session_id), {}
 
         results = runtime.query_service.search(
@@ -651,6 +712,14 @@ class SessionRagQueryService:
     def _should_include_recent_lesson_window(query_text: str) -> bool:
         normalized = SessionRagQueryService._normalize_query_text(query_text)
         return SessionRagQueryService._contains_any(normalized, _RECENT_TIMELINE_TERMS)
+
+    @staticmethod
+    def _empty_recent_prompt_context() -> dict[str, list[str]]:
+        return {key: [] for key in _RECENT_CONTEXT_SECTION_KEYS}
+
+    @staticmethod
+    def _count_recent_prompt_context(recent_prompt_context: Mapping[str, list[str]]) -> int:
+        return sum(len(recent_prompt_context.get(key, [])) for key in _RECENT_CONTEXT_SECTION_KEYS)
 
     @staticmethod
     def _format_classroom_context_item(index: int, item: object) -> str:
@@ -735,17 +804,80 @@ class SessionRagQueryService:
             return None
 
     @staticmethod
+    def _extract_recent_prompt_text_and_kind(item: object) -> tuple[str, str]:
+        text, source_type, metadata = SessionRagQueryService._extract_transcript_payload(item)
+        if not text:
+            return "", "speech_transcripts"
+
+        source_kind = SessionRagQueryService.classify_source_kind(source_type, metadata)
+        if source_kind == "speech":
+            return text, "speech_transcripts"
+        if source_kind == "ocr":
+            return text, "ocr_context"
+        if source_kind == "vlm":
+            return text, "vlm_context"
+        return text, "speech_transcripts"
+
+    @staticmethod
     def _extract_transcript_text(item: object) -> str:
+        text, _, _ = SessionRagQueryService._extract_transcript_payload(item)
+        return text
+
+    @staticmethod
+    def classify_source_kind(
+        source_type: str | None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str:
+        normalized_source_type = str(source_type or "").strip().lower()
+        normalized_metadata = dict(metadata or {})
+        parser = str(normalized_metadata.get("parser") or "").strip().lower()
+        region = str(normalized_metadata.get("region") or "").strip().lower()
+        transcript_role = str(normalized_metadata.get("transcript_role") or "").strip().lower()
+
+        if normalized_source_type == "realtime":
+            return "speech"
+        if normalized_source_type in {"document", "slide", "image"}:
+            return "documents"
+        if normalized_metadata.get("asset_id") or normalized_metadata.get("library_asset"):
+            return "documents"
+        if normalized_source_type == "video":
+            if transcript_role in _FINAL_TRANSCRIPT_ROLES or parser == "offline_funasr":
+                return "speech"
+            if region == "blackboard":
+                return "vlm"
+            if region in {"ppt", "slide", "screen"}:
+                return "ocr"
+            if "vlm" in parser and "ocr" not in parser:
+                return "vlm"
+            if "ocr" in parser:
+                return "ocr"
+            if "vlm" in parser:
+                return "vlm"
+        return "other"
+
+    @staticmethod
+    def _extract_transcript_payload(item: object) -> tuple[str, str, Mapping[str, Any]]:
+        source_type = ""
+        metadata: Mapping[str, Any] | dict[str, Any] = {}
         if isinstance(item, TranscriptRecord):
             text = item.content
+            source_type = item.source_type or ""
+            metadata = item.metadata
         elif isinstance(item, Mapping):
             try:
-                text = TranscriptRecord.from_dict(item).content
+                record = TranscriptRecord.from_dict(item)
+                text = record.content
+                source_type = record.source_type or ""
+                metadata = record.metadata
             except ValueError:
                 text = str(item.get("clean_text") or item.get("text") or "")
+                source_type = str(item.get("source_type") or "")
+                raw_metadata = item.get("metadata")
+                if isinstance(raw_metadata, Mapping):
+                    metadata = raw_metadata
         else:
             text = ""
-        return " ".join(text.strip().split())
+        return " ".join(text.strip().split()), source_type.strip().lower(), metadata
 
 
 def _metadata_str(metadata: dict[str, object], key: str) -> str | None:

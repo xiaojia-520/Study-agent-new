@@ -48,6 +48,7 @@ class SessionQueryRequest(BaseModel):
     with_llm: bool = True
     include_rag_context: bool = False
     classroom_context_mode: ClassroomContextMode = ClassroomContextMode.SESSION
+    asset_ids: list[str] = []
 
 
 class SessionSummaryRequest(BaseModel):
@@ -259,6 +260,53 @@ async def upload_session_vision_frame(
         await file.close()
 
 
+@router.get("/assets")
+async def list_lesson_assets(limit: int = Query(default=100, ge=1, le=500)):
+    items = lesson_asset_service.list_assets(limit=limit)
+    return {
+        "count": len(items),
+        "items": [lesson_asset_service.to_dict(item) for item in items],
+    }
+
+
+@router.post("/assets")
+async def upload_lesson_asset(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    subject: str | None = Form(default=None),
+):
+    file_name = file.filename or "document"
+    try:
+        validate_asset_file_name(file_name)
+        asset_id, safe_name, target_path = lesson_asset_service.allocate_library_upload_path(
+            file_name=file_name,
+        )
+        file_size = 0
+        with target_path.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                handle.write(chunk)
+        asset = lesson_asset_service.create_library_asset(
+            asset_id=asset_id,
+            file_name=safe_name,
+            file_path=target_path,
+            file_size=file_size,
+            media_type=file.content_type or "application/octet-stream",
+            subject=(subject or "").strip() or None,
+            metadata={"original_file_name": file_name, "library_asset": True},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+    background_tasks.add_task(lesson_asset_service.parse_and_index_asset, asset.asset_id)
+    return {"item": lesson_asset_service.to_dict(asset)}
+
+
 @router.post("/{session_id}/assets")
 async def upload_session_asset(
     session_id: str,
@@ -437,6 +485,7 @@ async def query_session(session_id: str, payload: SessionQueryRequest):
             with_llm=payload.with_llm,
             include_rag_context=payload.include_rag_context,
             classroom_context_mode=payload.classroom_context_mode,
+            asset_ids=payload.asset_ids,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"session not found: {session_id}") from exc
@@ -446,11 +495,14 @@ async def query_session(session_id: str, payload: SessionQueryRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     metadata = dict(answer.metadata)
+    result_items = [_query_result_response_item(result) for result in answer.results]
+    citation_items = [_query_citation_response_item(citation) for citation in answer.citations]
     return {
         "query": answer.query,
         "answer": answer.answer,
-        "results": [asdict(result) for result in answer.results],
-        "citations": [asdict(citation) for citation in answer.citations],
+        "results": result_items,
+        "grouped_results": _group_query_result_items(result_items),
+        "citations": citation_items,
         "metadata": metadata,
         "scope": metadata.get("scope"),
         "session_id": metadata.get("session_id"),
@@ -517,3 +569,50 @@ def _video_response_item(video):
     item["video_url"] = f"/sessions/videos/{video.video_id}/file"
     item["srt_url"] = f"/sessions/videos/{video.video_id}/srt" if video.srt_path else None
     return item
+
+
+def _query_result_response_item(result) -> dict[str, object]:
+    metadata = dict(getattr(result, "metadata", {}) or {})
+    return {
+        "doc_id": result.doc_id,
+        "content": result.content,
+        "score": result.score,
+        "session_id": result.session_id,
+        "subject": result.subject,
+        "source_type": result.source_type,
+        "source_kind": session_rag_query_service.classify_source_kind(result.source_type, metadata),
+        "metadata": metadata,
+    }
+
+
+def _query_citation_response_item(citation) -> dict[str, object]:
+    metadata = dict(getattr(citation, "metadata", {}) or {})
+    return {
+        "index": citation.index,
+        "doc_id": citation.doc_id,
+        "snippet": citation.snippet,
+        "score": citation.score,
+        "session_id": citation.session_id,
+        "subject": citation.subject,
+        "source_type": citation.source_type,
+        "source_kind": session_rag_query_service.classify_source_kind(citation.source_type, metadata),
+        "course_id": citation.course_id,
+        "lesson_id": citation.lesson_id,
+        "metadata": metadata,
+    }
+
+
+def _group_query_result_items(items: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+    grouped: dict[str, list[dict[str, object]]] = {
+        "speech": [],
+        "ocr": [],
+        "vlm": [],
+        "documents": [],
+        "other": [],
+    }
+    for item in items:
+        source_kind = str(item.get("source_kind") or "other").strip().lower()
+        if source_kind not in grouped:
+            source_kind = "other"
+        grouped[source_kind].append(item)
+    return grouped

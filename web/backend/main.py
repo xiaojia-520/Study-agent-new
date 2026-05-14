@@ -20,6 +20,7 @@ from web.backend.app.services.session_rag_query_service import session_rag_query
 from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
 from web.backend.app.services.session_video_service import session_video_service
 from web.backend.app.services.transcript_service import transcript_service
+from src.application.runtime.session_manager import session_manager
 
 app = FastAPI(title="Study Agent Backend")
 logger = get_logger("WebBackend")
@@ -46,6 +47,8 @@ async def warmup_models():
     lesson_asset_service.init_schema()
     session_video_service.init_schema()
     lesson_note_repository.init_schema()
+    session_manager.ping()
+    logger.info("Backend startup: session backend is ready")
     warmup_model = resolve_realtime_asr_model(settings.ASR_DEFAULT_MODEL_KEY)
     logger.info("Backend startup warmup: loading ASR model %s", warmup_model.key)
     model_hub.load_asr_model(model_name=warmup_model.resolved_model_name)

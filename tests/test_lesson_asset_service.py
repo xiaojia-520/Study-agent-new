@@ -60,6 +60,35 @@ class FakeIndexingService:
 
 
 class LessonAssetServiceTests(unittest.TestCase):
+    def test_create_library_asset_uses_independent_asset_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteStore(Path(temp_dir) / "asset.sqlite3")
+            transcript_service = TranscriptService(store=store)
+            transcript_service.init_schema()
+            service = LessonAssetService(
+                store=store,
+                mineru_client=FakeMineruClient(),
+                transcript_writer=transcript_service,
+                runtime_factory=lambda: SimpleNamespace(indexing_service=FakeIndexingService(), embed_model=object()),
+            )
+            upload_path = Path(temp_dir) / "library.pdf"
+            upload_path.write_bytes(b"%PDF-1.4")
+
+            asset = service.create_library_asset(
+                asset_id="asset-library",
+                file_name="library.pdf",
+                file_path=upload_path,
+                file_size=upload_path.stat().st_size,
+                media_type="application/pdf",
+                subject="shared docs",
+            )
+
+            self.assertEqual(asset.session_id, "asset-asset-library")
+            self.assertIsNone(asset.course_id)
+            self.assertIsNone(asset.lesson_id)
+            self.assertEqual(asset.subject, "shared docs")
+            self.assertEqual(service.list_assets(limit=10)[0].asset_id, "asset-library")
+
     def test_parse_asset_writes_document_records_and_indexes_them(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SQLiteStore(Path(temp_dir) / "asset.sqlite3")

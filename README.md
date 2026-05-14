@@ -1,12 +1,12 @@
 # Study Agent
 
-Study Agent 是一个面向课堂学习场景的本地优先学习系统。它把实时语音转写、课件解析、视频字幕、课堂问答、课后笔记和复习 copilot 串成了一条完整链路。
+Study Agent 是一个面向课堂学习场景的本地优先学习系统。它把实时语音转写、视觉识别、资料解析、视频字幕、课堂问答、课后笔记和复习 copilot 串成了一条完整链路。
 
 从当前实现看，它已经不只是一个“语音转写 Demo”，而是一套围绕 `course_id + lesson_id + session_id` 运转的课堂知识沉淀平台：
 
 - 上课中：实时语音转写、视觉截帧 OCR/VLM、课堂内问答
 - 课后：历史回看、视频字幕、精修转写、总结、测验、笔记
-- 学习工作台：Lesson Copilot 调用已有工具做复习编排
+- 学习工作台：资料库管理、Lesson Copilot 复习编排
 
 ## 1. 当前能力
 
@@ -14,6 +14,8 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 
 - 浏览器采集麦克风音频，通过 WebSocket 发送到后端
 - 后端使用实时 ASR 管线处理音频
+- 支持录音前确认提示、录音中麦克风热切换
+- 同一课程名 15 分钟内再次开始录音时，前端可提示是否接续上一段课堂结果
 - 转写结果写入：
   - SQLite `transcript_records`
   - 本地 JSONL 转写文件
@@ -40,13 +42,18 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 ### 1.4 课件与资料解析
 
 - 支持上传 PDF、PPT、Word、HTML、图片等课堂资料
+- 支持两类入口：
+  - 跟随某个课堂 session 上传的资料
+  - 独立于课堂的资料库上传入口
 - 后端通过 MinerU 解析文本、页面结构、公式和表格
 - 解析结果写入统一 transcript / RAG 体系
+- 问答时可由前端显式选择资料库文件作为辅助检索范围
 
 ### 1.5 课后复习能力
 
 - 历史课堂浏览
 - 原始转写与精修转写
+- 历史课堂追问
 - 课后总结
 - 测验题生成
 - 课节级笔记 `lesson_notes`
@@ -69,6 +76,18 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 - `generate_lesson_summary`
 - `query_lesson_knowledge`
 
+### 1.7 Session 与运行时状态
+
+- 全系统围绕 `course_id + lesson_id + session_id` 组织课堂数据
+- `session_id` 用于单次录音 / 单次视频 / 单次实时链路
+- `lesson_id` 用于把同一节课的多段录音、多份视频、多轮问答串起来
+- Session backend 支持两种模式：
+  - 默认内存模式
+  - 配置 `REDIS_URL` 后切换到 Redis
+- Redis 模式下会话状态带 TTL：
+  - 活跃态默认保留 24 小时
+  - 停止 / 错误态默认保留 6 小时
+
 ## 2. 系统页面
 
 前端路由：
@@ -81,7 +100,7 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 
 - `LiveView`：上课中
 - `History`：回看和追溯
-- `StudyLibView`：课后复习、笔记、copilot
+- `StudyLibView`：资料库、课后复习、笔记、copilot
 
 ## 3. 核心业务流
 
@@ -131,6 +150,17 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 -> RAG
 ```
 
+资料库模式：
+
+```text
+上传 PDF/PPT/HTML/图片
+-> POST /sessions/assets
+-> lesson_asset_service
+-> MinerU 解析
+-> transcript_records
+-> 在问答时按 asset_ids 参与辅助检索
+```
+
 ### 3.5 课后笔记流
 
 ```text
@@ -161,6 +191,7 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 - FastAPI
 - WebSocket
 - SQLite
+- Redis（可选，用于 session backend）
 - Qdrant
 - LlamaIndex
 - OpenAI-compatible LLM API
@@ -234,7 +265,18 @@ data/study_agent.sqlite3
 - `refined_transcript_records`
 - `lesson_notes`
 
-### 6.2 本地文件目录
+### 6.2 Redis（可选）
+
+- 用途：session backend
+- 开启方式：配置 `REDIS_URL`
+- 关键 key：
+  - `study-agent:sessions:index`
+  - `study-agent:sessions:session:{session_id}`
+- 过期策略：
+  - 活跃态默认 `86400` 秒
+  - 停止 / 错误态默认 `21600` 秒
+
+### 6.3 本地文件目录
 
 ```text
 data/transcripts/       # JSONL 转写
@@ -246,11 +288,18 @@ data/qdrant/            # 本地 Qdrant 数据
 logs/                   # 日志
 ```
 
-### 6.3 向量库
+### 6.4 向量库
 
 - 默认使用 Qdrant
 - 支持本地 Qdrant 目录
 - 主要索引内容来自统一 transcript 记录，而不是直接索引原始二进制文件
+- 问答返回保留扁平 `results`，同时增加按来源归类的 `grouped_results`
+- 当前统一来源类型包括：
+  - `speech`
+  - `ocr`
+  - `vlm`
+  - `documents`
+  - `other`
 
 ## 7. 环境要求
 
@@ -339,6 +388,12 @@ config/.env
 建议最少配置以下变量：
 
 ```env
+# Session backend（可选）
+REDIS_URL=
+SESSION_REDIS_PREFIX=study-agent:sessions
+SESSION_REDIS_TTL_SECONDS=86400
+SESSION_REDIS_TERMINAL_TTL_SECONDS=21600
+
 # Qdrant / RAG
 RAG_QDRANT_PREFER_LOCAL=true
 RAG_QDRANT_COLLECTION=speech_transcript_chunks
@@ -368,8 +423,10 @@ MINERU_AUTO_INDEX_ENABLED=true
 
 补充说明：
 
+- `ASR_DEVICE=auto`、`EMBED_DEVICE=auto` 会自动解析为可用的 `cuda` 或 `cpu`
 - 不需要 LLM 时，可设 `RAG_ENABLE_LLM=false`
 - 不配置 MinerU 时，实时课堂和普通 RAG 仍可运行，但资料解析功能不可用
+- 配置 `REDIS_URL` 但 Redis 未启动时，后端会在 startup 阶段直接失败
 - `config/settings.py` 是当前所有默认路径和运行参数的最终来源
 
 ## 10. 启动方式
@@ -425,11 +482,24 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 5. 查看实时转写
 6. 在课堂问答区提问
 
+补充：
+
+- 如果同名课程 15 分钟内存在上一段录音快照，前端会提示是否接续
+- 接续时会沿用 `course_id + lesson_id`，但会创建新的 `session_id`
+- 课堂问答默认是“课堂上下文直答”模式；打开 `include_rag_context` 后会返回结构化检索结果与引用
+
 ### 11.2 上传资料
 
 1. 在课堂中上传 PDF / PPT / Word / HTML / 图片
 2. 等待 MinerU 解析完成
 3. 再在问答区或历史页使用这些内容
+
+如果是资料库模式：
+
+1. 打开 `/workshop`
+2. 上传资料到共享资料库
+3. 在课堂问答区勾选需要参与检索的资料
+4. 再发起课堂问答
 
 ### 11.3 上传视频
 
@@ -477,6 +547,9 @@ GET  /sessions/{session_id}/messages
 ### 12.3 资料 / 视频 / 视觉
 
 ```text
+GET  /sessions/assets
+POST /sessions/assets
+
 POST /sessions/{session_id}/assets
 GET  /sessions/{session_id}/assets
 GET  /sessions/assets/{asset_id}
@@ -497,6 +570,20 @@ POST /sessions/{session_id}/query
 POST /sessions/{session_id}/summary
 POST /sessions/{session_id}/quiz
 ```
+
+`POST /sessions/{session_id}/query` 当前支持的重要参数：
+
+- `scope`: `auto | current_lesson | course_all | course_history | global`
+- `with_llm`
+- `include_rag_context`
+- `classroom_context_mode`: `session | lesson`
+- `asset_ids`: 显式限制资料库检索范围
+
+返回中除了 `answer / results / citations / metadata`，还会带：
+
+- `grouped_results`
+- `result.source_kind`
+- `citation.source_kind`
 
 ### 12.5 Lesson Notes / Copilot
 
@@ -606,6 +693,34 @@ DLL load failed
 - FFmpeg 是否可用
 - FunASR 模型是否完整
 - `lesson_videos.status` 是否为 `done`
+
+### 15.6 启动时报 Redis 连接拒绝
+
+如果出现：
+
+```text
+ConnectionError: Error 10061 connecting to 127.0.0.1:6379
+```
+
+通常说明：
+
+- `config/.env` 中配置了 `REDIS_URL`
+- 但本机 Redis 或 Docker 容器未启动
+
+处理方式：
+
+- 启动 Redis
+- 或临时移除 `REDIS_URL`，退回内存 session backend
+
+### 15.7 SentenceTransformer / torch 不支持 auto
+
+当前 embedding 设备选择已经做了自动解析：
+
+- `EMBED_DEVICE=auto` 会被解析为 `cuda` 或 `cpu`
+- 如果仍然报 device 相关错误，优先检查：
+  - 依赖是否完整
+  - CUDA 是否可用
+  - 本地模型目录是否存在
 
 ## 16. 当前定位
 

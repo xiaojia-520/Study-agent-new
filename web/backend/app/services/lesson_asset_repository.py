@@ -27,11 +27,69 @@ class LessonAssetRepository:
         target_dir.mkdir(parents=True, exist_ok=True)
         return asset_id, safe_name, target_dir / f"{asset_id}_{safe_name}"
 
+    def allocate_library_upload_path(self, *, file_name: str) -> tuple[str, str, Path]:
+        asset_id = uuid.uuid4().hex
+        safe_name = sanitize_asset_filename(file_name)
+        target_dir = settings.ASSET_SAVE_DIR / "library"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return asset_id, safe_name, target_dir / f"{asset_id}_{safe_name}"
+
     def create_asset(
         self,
         *,
         asset_id: str,
         session: RealtimeSession,
+        file_name: str,
+        file_path: Path,
+        file_size: int,
+        media_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> LessonAsset:
+        return self._create_asset_record(
+            asset_id=asset_id,
+            session_id=session.session_id,
+            course_id=session.course_id,
+            lesson_id=session.lesson_id,
+            subject=session.subject,
+            file_name=file_name,
+            file_path=file_path,
+            file_size=file_size,
+            media_type=media_type,
+            metadata=metadata,
+        )
+
+    def create_library_asset(
+        self,
+        *,
+        asset_id: str,
+        file_name: str,
+        file_path: Path,
+        file_size: int,
+        media_type: str,
+        subject: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> LessonAsset:
+        return self._create_asset_record(
+            asset_id=asset_id,
+            session_id=f"asset-{asset_id}",
+            course_id=None,
+            lesson_id=None,
+            subject=subject,
+            file_name=file_name,
+            file_path=file_path,
+            file_size=file_size,
+            media_type=media_type,
+            metadata=metadata,
+        )
+
+    def _create_asset_record(
+        self,
+        *,
+        asset_id: str,
+        session_id: str,
+        course_id: str | None,
+        lesson_id: str | None,
+        subject: str | None,
         file_name: str,
         file_path: Path,
         file_size: int,
@@ -55,10 +113,10 @@ class LessonAssetRepository:
             """,
             (
                 asset_id,
-                session.session_id,
-                session.course_id,
-                session.lesson_id,
-                session.subject,
+                session_id,
+                course_id,
+                lesson_id,
+                subject,
                 file_name,
                 str(file_path),
                 int(file_size),
@@ -73,6 +131,18 @@ class LessonAssetRepository:
         if asset is None:
             raise RuntimeError("failed to create lesson asset")
         return asset
+
+    def list_assets(self, *, limit: int = 100) -> list[LessonAsset]:
+        rows = self.store.query_all(
+            """
+            SELECT *
+            FROM lesson_assets
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return [_row_to_asset(row) for row in rows]
 
     def list_session_assets(self, session_id: str) -> list[LessonAsset]:
         rows = self.store.query_all(

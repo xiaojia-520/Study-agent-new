@@ -8,6 +8,7 @@ from pydantic import Field, PrivateAttr
 from sentence_transformers import SentenceTransformer
 
 from config.settings import settings
+from src.infrastructure.device import resolve_device
 
 
 def _load_base_embedding():
@@ -37,15 +38,16 @@ class SentenceTransformerEmbedding(_load_base_embedding()):
         **kwargs: Any,
     ) -> None:
         resolved_model_name = str(model_name or settings.RAG_EMBED_MODEL_NAME)
+        resolved_device = resolve_device(device)
         super().__init__(
             model_name=resolved_model_name,
             embed_batch_size=embed_batch_size,
             normalize_embeddings=normalize_embeddings,
             show_progress_bar=show_progress_bar,
-            device=device,
+            device=resolved_device,
             **kwargs,
         )
-        self._model = SentenceTransformer(resolved_model_name, device=device)
+        self._model = SentenceTransformer(resolved_model_name, device=resolved_device)
 
     @classmethod
     def class_name(cls) -> str:

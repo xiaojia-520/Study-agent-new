@@ -57,6 +57,9 @@ async def ws_audio(websocket: WebSocket, session_id: str):
         while True:
             message = await websocket.receive()
 
+            if message.get("type") == "websocket.disconnect":
+                break
+
             # ===== 处理音频数据（二进制）=====
             if message.get("bytes"):
                 # 处理音频数据（如语音识别）

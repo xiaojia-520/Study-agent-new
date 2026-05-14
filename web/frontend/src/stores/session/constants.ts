@@ -9,4 +9,5 @@ export const sessionModelOptions: ModelOption[] = [
 export const sessionClientId = 'web-frontend'
 export const defaultSampleRate = 16000
 export const defaultChannels = 1
-export const lastLessonStorageKey = 'study-agent:last-active-lesson'
+export const recordingResumeStorageKey = 'study-agent:last-recording-session'
+export const recordingResumeStorageTtlMs = 15 * 60 * 1000

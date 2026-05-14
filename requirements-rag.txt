@@ -13,6 +13,7 @@ python-multipart
 requests
 huggingface_hub
 modelscope
+redis
 
 # Embedding runtime
 sentence-transformers

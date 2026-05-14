@@ -2,6 +2,7 @@ export type ModelKey = 'paraformer-zh' | 'paraformer-zh-streaming' | 'paraformer
 export type QueryScope = 'auto' | 'current_lesson' | 'course_all' | 'course_history' | 'global'
 export type ClassroomContextMode = 'session' | 'lesson'
 export type WebSocketState = 'closed' | 'connecting' | 'open'
+export type QuerySourceKind = 'speech' | 'ocr' | 'vlm' | 'documents' | 'other'
 
 export interface ModelOption {
   label: string
@@ -257,7 +258,7 @@ export interface LessonAssetResponse {
 }
 
 export interface LessonAssetListResponse {
-  session_id: string
+  session_id?: string
   count: number
   items: LessonAssetItem[]
 }
@@ -356,6 +357,7 @@ export interface QueryResult {
   session_id?: string | null
   subject?: string | null
   source_type?: string | null
+  source_kind?: QuerySourceKind | null
   metadata?: Record<string, unknown>
 }
 
@@ -367,15 +369,25 @@ export interface QueryCitation {
   session_id?: string | null
   subject?: string | null
   source_type?: string | null
+  source_kind?: QuerySourceKind | null
   course_id?: string | null
   lesson_id?: string | null
   metadata?: Record<string, unknown>
+}
+
+export interface QueryGroupedResults {
+  speech: QueryResult[]
+  ocr: QueryResult[]
+  vlm: QueryResult[]
+  documents: QueryResult[]
+  other: QueryResult[]
 }
 
 export interface QueryResponse {
   query: string
   answer?: string | null
   results: QueryResult[]
+  grouped_results: QueryGroupedResults
   citations: QueryCitation[]
   metadata: Record<string, unknown>
   scope?: string
@@ -391,6 +403,7 @@ export interface QuerySessionPayload {
   with_llm: boolean
   include_rag_context: boolean
   classroom_context_mode?: ClassroomContextMode
+  asset_ids?: string[]
 }
 
 export interface RetrievalResult {
@@ -402,6 +415,7 @@ export interface RetrievalResult {
   docId: string
   sessionId?: string | null
   sourceType?: string | null
+  sourceKind?: QuerySourceKind | null
   metadata?: Record<string, unknown>
 }
 

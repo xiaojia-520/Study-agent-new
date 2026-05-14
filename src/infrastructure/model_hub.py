@@ -4,22 +4,10 @@ from silero_vad import load_silero_vad
 import threading
 
 from config.settings import settings
+from src.infrastructure.device import resolve_device
 from src.infrastructure.logger import get_logger
 
 logger = get_logger("ModelHub")
-
-
-def _resolve_device(requested: str | None) -> str:
-    device = (requested or "").strip().lower()
-    if device and device != "auto":
-        return device
-
-    try:
-        import torch
-    except ImportError:
-        return "cpu"
-
-    return "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class ModelHub:
@@ -40,7 +28,7 @@ class ModelHub:
 
     def load_asr_model(self, model_name: str | None = None):
         resolved_model_name = model_name or settings.ASR_MODEL_NAME
-        resolved_device = _resolve_device(settings.ASR_DEVICE)
+        resolved_device = resolve_device(settings.ASR_DEVICE)
         with self._asr_lock:
             model = self._asr_models.get(resolved_model_name)
             if model is None:
@@ -64,7 +52,7 @@ class ModelHub:
 
     def load_embed_model(self):
         if self._embed_model is None:
-            resolved_device = _resolve_device(settings.EMBED_DEVICE)
+            resolved_device = resolve_device(settings.EMBED_DEVICE)
             logger.info(f"Loading embed model: {settings.EMBED_MODEL_NAME} on device={resolved_device}")
             self._embed_model = SentenceTransformer(settings.EMBED_MODEL_NAME, device=resolved_device)
             logger.info("Embed model loaded")
@@ -79,7 +67,7 @@ class ModelHub:
 
     def load_funasr_model(self):
         if self.funasr_model is None:
-            resolved_device = _resolve_device(settings.ASR_DEVICE)
+            resolved_device = resolve_device(settings.ASR_DEVICE)
             logger.info(f"Loading FunASR offline model with punc/vad on device={resolved_device}")
             self.funasr_model = AutoModel(
                 model=settings.ASR_MODEL_NAME,
@@ -91,6 +79,9 @@ class ModelHub:
             )
             logger.info("FunASR offline model loaded")
         return self.funasr_model
+
+
+_resolve_device = resolve_device
 
 
 model_hub = ModelHub()

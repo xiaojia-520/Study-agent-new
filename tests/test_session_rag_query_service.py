@@ -90,6 +90,41 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be resolved"):
             service.build_scope_filters(session, QueryScope.AUTO)
 
+    def test_build_query_filters_prefers_selected_assets(self) -> None:
+        service = SessionRagQueryService(runtime_factory=lambda: None, session_getter=lambda _: None)
+        session = self._session()
+
+        filters = service.build_query_filters(
+            session,
+            QueryScope.CURRENT_LESSON,
+            asset_ids=["asset-a", "asset-b", "asset-a", ""],
+        )
+
+        self.assertIsInstance(filters, MetadataFilterSpec)
+        self.assertEqual(filters.condition, "or")
+        self.assertEqual([(clause.key, clause.value, clause.operator) for clause in filters.clauses], [
+            ("asset_id", "asset-a", "eq"),
+            ("asset_id", "asset-b", "eq"),
+        ])
+
+    def test_classify_source_kind_distinguishes_speech_ocr_vlm_documents(self) -> None:
+        service = SessionRagQueryService(runtime_factory=lambda: None, session_getter=lambda _: None)
+
+        self.assertEqual(service.classify_source_kind("realtime", {}), "speech")
+        self.assertEqual(
+            service.classify_source_kind("video", {"parser": "offline_funasr", "transcript_role": "final"}),
+            "speech",
+        )
+        self.assertEqual(
+            service.classify_source_kind("video", {"parser": "manual_roi_ocr_vlm", "region": "ppt"}),
+            "ocr",
+        )
+        self.assertEqual(
+            service.classify_source_kind("video", {"parser": "manual_roi_ocr_vlm", "region": "blackboard"}),
+            "vlm",
+        )
+        self.assertEqual(service.classify_source_kind("document", {"asset_id": "asset-a"}), "documents")
+
     def test_query_session_retrieval_only_returns_citations(self) -> None:
         fake_query_service = FakeQueryService(
             [
@@ -137,6 +172,40 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         self.assertEqual(len(answer.citations), 1)
         self.assertEqual(answer.citations[0].index, 1)
         self.assertEqual(answer.citations[0].doc_id, "doc-1")
+
+    def test_query_session_filters_by_selected_assets(self) -> None:
+        fake_query_service = FakeQueryService(
+            [
+                SearchResult(
+                    doc_id="asset-doc",
+                    content="Selected PDF content.",
+                    metadata={"asset_id": "asset-a"},
+                )
+            ]
+        )
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=None,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="query selected docs",
+            scope=QueryScope.CURRENT_LESSON,
+            asset_ids=["asset-a"],
+        )
+
+        filters = fake_query_service.calls[0][1]["filters"]
+        self.assertEqual(filters.condition, "or")
+        self.assertEqual([(clause.key, clause.value) for clause in filters.clauses], [("asset_id", "asset-a")])
+        self.assertEqual(answer.metadata["selected_asset_ids"], ["asset-a"])
+        self.assertEqual(answer.metadata["selected_asset_count"], 1)
 
     def test_query_session_resolves_auto_scope_via_rules(self) -> None:
         fake_query_service = FakeQueryService(
@@ -245,9 +314,23 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         fake_llm = FakeLLM("A limit is the value a function approaches near a point [1].")
         transcript_items = [
             self._transcript_item(chunk_id=1, text="Old warmup transcript."),
-            self._transcript_item(chunk_id=2, text="Recent context one."),
-            self._transcript_item(chunk_id=3, text="Recent context two."),
-            self._transcript_item(chunk_id=4, text="Recent context three."),
+            self._transcript_item(chunk_id=2, text="Recent speech context."),
+            {
+                **self._transcript_item(chunk_id=3, text="PPT OCR says epsilon-delta definition."),
+                "source_type": "video",
+                "metadata": {
+                    "parser": "manual_roi_ocr_vlm",
+                    "region": "ppt",
+                },
+            },
+            {
+                **self._transcript_item(chunk_id=4, text="Blackboard VLM sees derivative rules."),
+                "source_type": "video",
+                "metadata": {
+                    "parser": "manual_roi_ocr_vlm",
+                    "region": "blackboard",
+                },
+            },
         ]
         runtime = SimpleNamespace(
             config=SimpleNamespace(top_k=5),
@@ -272,11 +355,16 @@ class SessionRagQueryServiceTests(unittest.TestCase):
 
         prompt = fake_llm.prompts[0]
         self.assertEqual(answer.metadata["recent_transcript_count"], 3)
-        self.assertIn("Recent transcript context:", prompt)
+        self.assertEqual(answer.metadata["recent_speech_transcript_count"], 1)
+        self.assertEqual(answer.metadata["recent_ocr_context_count"], 1)
+        self.assertEqual(answer.metadata["recent_vlm_context_count"], 1)
+        self.assertIn("Recent speech transcript context:", prompt)
+        self.assertIn("Recent OCR context:", prompt)
+        self.assertIn("Recent VLM context:", prompt)
         self.assertNotIn("Old warmup transcript.", prompt)
-        self.assertIn("R1. Recent context one.", prompt)
-        self.assertIn("R2. Recent context two.", prompt)
-        self.assertIn("R3. Recent context three.", prompt)
+        self.assertIn("S1. Recent speech context.", prompt)
+        self.assertIn("O1. PPT OCR says epsilon-delta definition.", prompt)
+        self.assertIn("V1. Blackboard VLM sees derivative rules.", prompt)
 
     def test_query_session_can_use_recent_transcripts_when_retrieval_has_no_results(self) -> None:
         fake_query_service = FakeQueryService([])
@@ -308,7 +396,9 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         self.assertEqual(answer.metadata["citation_count"], 0)
         self.assertEqual(answer.metadata["recent_transcript_count"], 1)
         self.assertIn("[no context retrieved]", fake_llm.prompts[0])
-        self.assertIn("R1. Limits were introduced as approach values.", fake_llm.prompts[0])
+        self.assertIn("S1. Limits were introduced as approach values.", fake_llm.prompts[0])
+        self.assertIn("[no recent OCR context]", fake_llm.prompts[0])
+        self.assertIn("[no recent VLM context]", fake_llm.prompts[0])
 
     def test_query_session_uses_conversation_memory_for_follow_up(self) -> None:
         fake_query_service = FakeQueryService(
@@ -364,7 +454,7 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         self.assertIn("Assistant: A limit describes the value a function approaches.", prompt)
         self.assertEqual(
             fake_memory.lesson_calls[0],
-            {"course_id": "math-course", "lesson_id": "math-course-lesson-1", "limit": 6},
+            {"course_id": "math-course", "lesson_id": "math-course-lesson-1", "limit": 20},
         )
         self.assertEqual(answer.metadata["memory_turn_count"], 1)
         self.assertEqual(answer.metadata["memory_scope"], "lesson")
@@ -466,10 +556,10 @@ class SessionRagQueryServiceTests(unittest.TestCase):
 
         prompt = fake_llm.prompts[0]
         self.assertEqual(answer.metadata["answer_prompt_version"], "direct-answer-v3")
-        self.assertEqual(answer.metadata["recent_classroom_context_count"], 30)
+        self.assertEqual(answer.metadata["recent_classroom_context_count"], 31)
         self.assertIn("Subject: math", prompt)
         self.assertIn("Classroom context:", prompt)
-        self.assertNotIn("Too old to keep.", prompt)
+        self.assertIn("Too old to keep.", prompt)
         self.assertIn("region=ppt", prompt)
         self.assertIn("region=blackboard", prompt)
         self.assertIn("Transcript 31", prompt)

@@ -67,6 +67,9 @@ class LessonAssetService:
     def allocate_upload_path(self, *, session_id: str, file_name: str) -> tuple[str, str, Path]:
         return self.repository.allocate_upload_path(session_id=session_id, file_name=file_name)
 
+    def allocate_library_upload_path(self, *, file_name: str) -> tuple[str, str, Path]:
+        return self.repository.allocate_library_upload_path(file_name=file_name)
+
     def create_asset(
         self,
         *,
@@ -87,6 +90,30 @@ class LessonAssetService:
             media_type=media_type,
             metadata=metadata,
         )
+
+    def create_library_asset(
+        self,
+        *,
+        asset_id: str,
+        file_name: str,
+        file_path: Path,
+        file_size: int,
+        media_type: str,
+        subject: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> LessonAsset:
+        return self.repository.create_library_asset(
+            asset_id=asset_id,
+            file_name=file_name,
+            file_path=file_path,
+            file_size=file_size,
+            media_type=media_type,
+            subject=subject,
+            metadata=metadata,
+        )
+
+    def list_assets(self, *, limit: int = 100) -> list[LessonAsset]:
+        return self.repository.list_assets(limit=limit)
 
     def list_session_assets(self, session_id: str) -> list[LessonAsset]:
         return self.repository.list_session_assets(session_id)

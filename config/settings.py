@@ -10,7 +10,7 @@ def _ensure_dir(path: Path) -> Path:
 
 class Settings(BaseSettings):
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
-    WEB_HOST: str = "::"
+    WEB_HOST: str = "127.0.0.1"
     WEB_PORT: int = 8000
 
     DATA_DIR: Path = _ensure_dir(BASE_DIR / "data")
@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     MINERU_RESULT_DIR: Path = _ensure_dir(DATA_DIR / "mineru_results")
     QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
     SQLITE_DB_PATH: Path = DATA_DIR / "study_agent.sqlite3"
+    REDIS_URL: str = ""
+    SESSION_REDIS_PREFIX: str = "study-agent:sessions"
+    SESSION_REDIS_TTL_SECONDS: int = 24 * 60 * 60
+    SESSION_REDIS_TERMINAL_TTL_SECONDS: int = 6 * 60 * 60
 
     MODEL_BASE_DIR: Path = _ensure_dir(BASE_DIR / "models")
     ASR_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "asr")
@@ -42,7 +46,7 @@ class Settings(BaseSettings):
         "paraformer-zh-streaming": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
         "paraformer-zh-streaming-2pass": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
     }
-    ASR_DEVICE: str = "cuda"
+    ASR_DEVICE: str = "auto"
     ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh-streaming"
     ASR_OFFLINE_MODEL_KEY: str = "paraformer-zh"
     ASR_WARMUP_OFFLINE_MODEL: bool = True
@@ -53,7 +57,7 @@ class Settings(BaseSettings):
     PUNC_MODEL_NAME: str = str(PUNC_MODEL_DIR / "punc_ct-transformer_cn-en-common-vocab471067-large")
 
     EMBED_MODEL_NAME: Path = EMBED_MODEL_DIR / "bge-small-zh-v1.5"
-    EMBED_DEVICE: str = "cuda"
+    EMBED_DEVICE: str = "auto"
     OCR_DET_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_det"
     OCR_REC_MODEL_NAME: Path = OCR_MODEL_DIR / "PP-OCRv5_mobile_rec"
     OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False

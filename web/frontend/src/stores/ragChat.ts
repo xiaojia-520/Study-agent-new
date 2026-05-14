@@ -26,13 +26,14 @@ function mapQueryResultToRetrieval(result: QueryResult, index: number): Retrieva
     title: result.subject || `检索片段 ${index + 1}`,
     snippet: result.content,
     source:
-      result.source_type && result.session_id
-        ? `${result.source_type} · ${result.session_id}`
-        : result.source_type || result.session_id || 'session retrieval',
+      result.source_kind && result.session_id
+        ? `${result.source_kind} · ${result.session_id}`
+        : result.source_kind || result.source_type || result.session_id || 'session retrieval',
     score: typeof result.score === 'number' ? result.score : null,
     docId: result.doc_id,
     sessionId: result.session_id,
     sourceType: result.source_type,
+    sourceKind: result.source_kind,
     metadata: result.metadata,
   }
 }
@@ -54,6 +55,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
   const queryScope = ref<QueryScope>('auto')
   const topK = ref(5)
   const includeRagContext = ref(false)
+  const selectedAssetIds = ref<string[]>([])
   const lastResponse = ref<QueryResponse | null>(null)
 
   function resetForSession(): void {
@@ -64,6 +66,16 @@ export const useRagChatStore = defineStore('ragChat', () => {
     includeRagContext.value = false
     lastResponse.value = null
     chatMessages.value = [buildWelcomeMessage()]
+  }
+
+  function toggleSelectedAsset(assetId: string): void {
+    const cleanId = assetId.trim()
+    if (!cleanId) {
+      return
+    }
+    selectedAssetIds.value = selectedAssetIds.value.includes(cleanId)
+      ? selectedAssetIds.value.filter((item) => item !== cleanId)
+      : [...selectedAssetIds.value, cleanId]
   }
 
   async function runQuery(question: string): Promise<QueryResponse> {
@@ -82,6 +94,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
         top_k: topK.value,
         with_llm: true,
         include_rag_context: includeRagContext.value,
+        asset_ids: selectedAssetIds.value,
       },
       sessionStore.backendBaseUrl,
     )
@@ -153,8 +166,10 @@ export const useRagChatStore = defineStore('ragChat', () => {
     queryScope,
     resetForSession,
     retrievalResults,
+    selectedAssetIds,
     sendCurrentQuestion,
     sending,
     topK,
+    toggleSelectedAsset,
   }
 })

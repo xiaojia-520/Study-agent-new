@@ -30,7 +30,7 @@ function resolveDefaultBackendBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin
   }
-  return 'http://[::1]:8000'
+  return 'http://127.0.0.1:8000'
 }
 
 export const defaultBackendBaseUrl = resolveDefaultBackendBaseUrl()
@@ -150,6 +150,37 @@ export function uploadSessionAsset(sessionId: string, file: File, baseUrl = defa
       body,
     },
     '上传课堂素材失败',
+    baseUrl,
+  )
+}
+
+export function uploadLessonAsset(file: File, subject?: string, baseUrl = defaultBackendBaseUrl) {
+  const body = new FormData()
+  body.append('file', file)
+  if (subject?.trim()) {
+    body.append('subject', subject.trim())
+  }
+  return requestJson<LessonAssetResponse>(
+    '/sessions/assets',
+    {
+      method: 'POST',
+      body,
+    },
+    '上传资料失败',
+    baseUrl,
+  )
+}
+
+export function fetchLessonAssets(limit = 100, baseUrl = defaultBackendBaseUrl) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+  })
+  return requestJson<LessonAssetListResponse>(
+    `/sessions/assets?${params.toString()}`,
+    {
+      method: 'GET',
+    },
+    '获取资料列表失败',
     baseUrl,
   )
 }

@@ -8,38 +8,43 @@ import type {
   WebSocketState,
 } from '../../types/study'
 import { defaultSampleRate } from './constants'
-import type { LessonSnapshotStatus, RefineStatusToast } from './types'
+import type {
+  RecordingResumeSnapshotStatus,
+  RefineStatusToast,
+} from './types'
 
 export function createRealtimeAudioActions(args: {
   backendBaseUrl: Ref<string>
   sessionInfo: Ref<SessionInfo | null>
   microphone: Ref<string>
+  switchingMicrophone: Ref<boolean>
   recording: Ref<boolean>
   initializing: Ref<boolean>
   websocketState: Ref<WebSocketState>
   errorMessage: Ref<string>
   audioFrameCount: Ref<number>
-  promptBeforeNextStart: Ref<boolean>
+  sessionNeedsFreshStart: Ref<boolean>
   ensureSession: () => Promise<SessionInfo>
   handleRealtimeEvent: (payload: RealtimeEvent) => void
   hydrateTranscriptsFromServer: () => Promise<void>
-  saveLessonSnapshot: (status: LessonSnapshotStatus) => void
+  saveRecordingSnapshot: (status: RecordingResumeSnapshotStatus) => void
   showRefineStatusToast: (payload: Omit<RefineStatusToast, 'id' | 'visible'>) => void
 }) {
   const {
     backendBaseUrl,
     sessionInfo,
     microphone,
+    switchingMicrophone,
     recording,
     initializing,
     websocketState,
     errorMessage,
     audioFrameCount,
-    promptBeforeNextStart,
+    sessionNeedsFreshStart,
     ensureSession,
     handleRealtimeEvent,
     hydrateTranscriptsFromServer,
-    saveLessonSnapshot,
+    saveRecordingSnapshot,
     showRefineStatusToast,
   } = args
 
@@ -59,6 +64,22 @@ export function createRealtimeAudioActions(args: {
       errorMessage.value = message
     },
   })
+
+  async function requestMicrophoneStream(microphoneId: string): Promise<MediaStream> {
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId:
+          microphoneId && microphoneId !== 'default'
+            ? { exact: microphoneId }
+            : undefined,
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+      video: false,
+    })
+  }
 
   async function releaseAudioResources(): Promise<void> {
     if (processorNode) {
@@ -110,19 +131,7 @@ export function createRealtimeAudioActions(args: {
       await connectWebSocket()
       await releaseAudioResources()
 
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId:
-            microphone.value && microphone.value !== 'default'
-              ? { exact: microphone.value }
-              : undefined,
-          channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-        video: false,
-      })
+      mediaStream = await requestMicrophoneStream(microphone.value)
 
       const targetSampleRate = activeSession.sample_rate || defaultSampleRate
       audioContext = new AudioContext({ sampleRate: targetSampleRate })
@@ -133,7 +142,7 @@ export function createRealtimeAudioActions(args: {
       muteGainNode = audioContext.createGain()
       muteGainNode.gain.value = 0
       recording.value = true
-      saveLessonSnapshot('active')
+      saveRecordingSnapshot('active')
 
       processorNode.onaudioprocess = (audioEvent: AudioProcessingEvent) => {
         if (!recording.value || !socketClient.isOpen) {
@@ -161,8 +170,8 @@ export function createRealtimeAudioActions(args: {
       recording.value = false
       await releaseAudioResources()
       await disconnectWebSocket()
-      promptBeforeNextStart.value = true
-      saveLessonSnapshot('interrupted')
+      sessionNeedsFreshStart.value = true
+      saveRecordingSnapshot('interrupted')
       errorMessage.value = error instanceof Error ? error.message : '启动录音失败。'
     } finally {
       initializing.value = false
@@ -181,6 +190,7 @@ export function createRealtimeAudioActions(args: {
     }
 
     recording.value = false
+    saveRecordingSnapshot('stopped')
     await releaseAudioResources()
     await disconnectWebSocket()
 
@@ -205,8 +215,7 @@ export function createRealtimeAudioActions(args: {
         })
       }
     } finally {
-      promptBeforeNextStart.value = true
-      saveLessonSnapshot('stopped')
+      sessionNeedsFreshStart.value = true
     }
   }
 
@@ -224,15 +233,72 @@ export function createRealtimeAudioActions(args: {
     await releaseAudioResources()
     await disconnectWebSocket()
     if (sessionInfo.value) {
-      promptBeforeNextStart.value = true
+      sessionNeedsFreshStart.value = true
+      saveRecordingSnapshot(wasRecording ? 'interrupted' : 'stopped')
     }
-    saveLessonSnapshot(wasRecording ? 'interrupted' : 'stopped')
+    if (wasRecording) {
+      sessionNeedsFreshStart.value = true
+    }
+  }
+
+  async function switchMicrophone(nextMicrophoneId: string): Promise<void> {
+    const nextId = nextMicrophoneId || 'default'
+    if (nextId === microphone.value) {
+      return
+    }
+
+    const previousMicrophoneId = microphone.value
+    if (!recording.value) {
+      microphone.value = nextId
+      return
+    }
+    if (!audioContext || !processorNode) {
+      microphone.value = nextId
+      return
+    }
+
+    switchingMicrophone.value = true
+    errorMessage.value = ''
+
+    let nextStream: MediaStream | null = null
+    let nextSourceNode: MediaStreamAudioSourceNode | null = null
+    try {
+      nextStream = await requestMicrophoneStream(nextId)
+      nextSourceNode = audioContext.createMediaStreamSource(nextStream)
+      nextSourceNode.connect(processorNode)
+
+      const previousStream = mediaStream
+      const previousSourceNode = mediaSourceNode
+
+      mediaStream = nextStream
+      mediaSourceNode = nextSourceNode
+      microphone.value = nextId
+
+      if (previousSourceNode) {
+        previousSourceNode.disconnect()
+      }
+      if (previousStream) {
+        previousStream.getTracks().forEach((track) => track.stop())
+      }
+    } catch (error) {
+      if (nextSourceNode) {
+        nextSourceNode.disconnect()
+      }
+      if (nextStream) {
+        nextStream.getTracks().forEach((track) => track.stop())
+      }
+      microphone.value = previousMicrophoneId
+      errorMessage.value = error instanceof Error ? error.message : '切换麦克风失败。'
+    } finally {
+      switchingMicrophone.value = false
+    }
   }
 
   return {
     cleanup,
     startRecording,
     stopRecording,
+    switchMicrophone,
     toggleRecording,
   }
 }

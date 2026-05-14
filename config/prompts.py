@@ -8,17 +8,27 @@ from src.core.knowledge.document_models import AnswerCitation
 
 RAG_CITED_ANSWER_SYSTEM_PROMPT = """You are a retrieval-grounded study assistant.
 
-Answer the user's question using only the retrieved context blocks, recent transcript context, and conversation history provided below.
+Answer the user's question using only the retrieved context blocks, recent speech transcripts, recent OCR context, recent VLM context, and conversation history provided below.
 Rules:
 - Do not invent facts that are not supported by the provided context.
 - If the context is insufficient, say so plainly.
 - Keep the answer concise and directly useful for studying.
 - Cite factual statements from retrieved context blocks inline using square-bracket citations like [1] or [1][2].
-- Recent transcript context is for conversational continuity and indexing-lag fallback.
+- Treat this as a classroom Q&A task first, not a generic document QA task.
+- Prioritize recent speech transcripts as the primary evidence of what is being taught in class right now.
+- Use retrieved document context to supplement definitions, background, or details that are missing or unclear in the classroom speech.
+- Recent speech transcripts are for conversational continuity and indexing-lag fallback.
+- Recent OCR context contains visible text extracted from slides, screens, or other classroom visuals. Treat it as text extraction that may contain recognition errors.
+- Recent VLM context contains model-generated descriptions or readings of classroom visuals such as blackboards. Treat it as visual interpretation that may be less reliable than direct text extraction.
+- Use OCR context only as supporting evidence for visible on-screen text; do not let it override clearer classroom speech or retrieved document context.
+- Use VLM context only as weak supporting evidence for visual content such as blackboard writing or diagrams; do not let it override speech, retrieved document context, or OCR.
 - Conversation history is for resolving follow-up references and preserving user intent.
-- Recent transcript context has no citation number; do not invent citation numbers for it.
+- Speech transcript, OCR context, and VLM context have no citation number; do not invent citation numbers for them.
 - Conversation history has no citation number; do not invent citation numbers for it.
-- If only recent transcript context or conversation history supports the answer, state that plainly without numeric citations.
+- If OCR context or VLM context conflicts with retrieved context blocks or speech transcripts, do not silently merge them. State the uncertainty plainly.
+- If classroom speech and retrieved document context differ, say so explicitly. Prefer describing what the teacher is currently saying, then mention the document as supplemental or conflicting context when needed.
+- If multiple source types support different parts of the answer, keep their roles clear instead of blending them into one unsupported claim.
+- If only speech transcript, OCR context, VLM context, or conversation history supports the answer, state that plainly without numeric citations.
 - Only cite citation numbers that exist in the retrieved context blocks.
 - Prefer the same language as the user's question. Default to Simplified Chinese when unclear.
 """
@@ -45,7 +55,9 @@ def build_rag_cited_answer_prompt(
     question: str,
     scope_label: str,
     citations: Iterable[AnswerCitation],
-    recent_transcripts: Iterable[str] = (),
+    recent_speech_transcripts: Iterable[str] = (),
+    recent_ocr_context: Iterable[str] = (),
+    recent_vlm_context: Iterable[str] = (),
     conversation_history: Iterable[tuple[str, str | None]] = (),
 ) -> str:
     context_blocks = []
@@ -69,7 +81,9 @@ def build_rag_cited_answer_prompt(
 
     joined_context = "\n\n".join(context_blocks)
     conversation_context = _build_conversation_history_context(conversation_history)
-    recent_context = _build_recent_transcript_context(recent_transcripts)
+    recent_speech = _build_recent_context_block("S", recent_speech_transcripts, empty_label="[no recent speech transcript]")
+    recent_ocr = _build_recent_context_block("O", recent_ocr_context, empty_label="[no recent OCR context]")
+    recent_vlm = _build_recent_context_block("V", recent_vlm_context, empty_label="[no recent VLM context]")
     return "\n\n".join(
         [
             RAG_CITED_ANSWER_SYSTEM_PROMPT.strip(),
@@ -77,8 +91,12 @@ def build_rag_cited_answer_prompt(
             f"Query scope: {scope_label}",
             "Conversation history:",
             conversation_context,
-            "Recent transcript context:",
-            recent_context,
+            "Recent speech transcript context:",
+            recent_speech,
+            "Recent OCR context:",
+            recent_ocr,
+            "Recent VLM context:",
+            recent_vlm,
             "Retrieved context blocks:",
             joined_context or "[no context retrieved]",
             "Write the final answer only. Do not output JSON or any extra headings.",
@@ -109,12 +127,16 @@ def build_direct_llm_answer_prompt(
 
 
 def _build_recent_transcript_context(recent_transcripts: Iterable[str]) -> str:
+    return _build_recent_context_block("R", recent_transcripts, empty_label="[no recent transcript]")
+
+
+def _build_recent_context_block(prefix: str, items: Iterable[str], *, empty_label: str) -> str:
     blocks = []
-    for index, text in enumerate(recent_transcripts, start=1):
+    for index, text in enumerate(items, start=1):
         clean_text = " ".join(str(text).strip().split())
         if clean_text:
-            blocks.append(f"R{index}. {clean_text}")
-    return "\n".join(blocks) or "[no recent transcript]"
+            blocks.append(f"{prefix}{index}. {clean_text}")
+    return "\n".join(blocks) or empty_label
 
 
 def _build_conversation_history_context(conversation_history: Iterable[tuple[str, str | None]]) -> str:

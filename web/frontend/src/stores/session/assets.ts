@@ -1,29 +1,27 @@
 import type { Ref } from 'vue'
 
 import {
+  fetchLessonAssets,
   fetchLessonAsset,
-  fetchSessionAssets,
-  uploadSessionAsset,
+  uploadLessonAsset as uploadLessonAssetRequest,
 } from '../../api/studyAgent'
-import type { LessonAssetItem, SessionInfo } from '../../types/study'
+import type { LessonAssetItem } from '../../types/study'
 
 export function createLessonAssetActions(args: {
   backendBaseUrl: Ref<string>
-  sessionInfo: Ref<SessionInfo | null>
+  subject: Ref<string>
+  recording: Ref<boolean>
   assetList: Ref<LessonAssetItem[]>
   assetUploading: Ref<boolean>
   assetErrorMessage: Ref<string>
-  ensureSession: () => Promise<SessionInfo>
-  hydrateTranscriptsFromServer: () => Promise<void>
 }) {
   const {
     backendBaseUrl,
-    sessionInfo,
+    subject,
+    recording,
     assetList,
     assetUploading,
     assetErrorMessage,
-    ensureSession,
-    hydrateTranscriptsFromServer,
   } = args
 
   function upsertAsset(asset: LessonAssetItem): void {
@@ -37,12 +35,8 @@ export function createLessonAssetActions(args: {
     assetList.value = next
   }
 
-  async function refreshSessionAssets(): Promise<void> {
-    if (!sessionInfo.value) {
-      assetList.value = []
-      return
-    }
-    const response = await fetchSessionAssets(sessionInfo.value.session_id, backendBaseUrl.value)
+  async function refreshLessonAssets(): Promise<void> {
+    const response = await fetchLessonAssets(100, backendBaseUrl.value)
     assetList.value = response.items
   }
 
@@ -55,9 +49,6 @@ export function createLessonAssetActions(args: {
       const response = await fetchLessonAsset(assetId, backendBaseUrl.value)
       upsertAsset(response.item)
       if (finalStatuses.has(response.item.status)) {
-        if (response.item.status === 'done') {
-          await hydrateTranscriptsFromServer()
-        }
         return
       }
       await new Promise((resolve) => window.setTimeout(resolve, 3000))
@@ -65,22 +56,26 @@ export function createLessonAssetActions(args: {
   }
 
   async function uploadLessonAsset(file: File): Promise<void> {
+    if (recording.value) {
+      assetErrorMessage.value = '录音中不能上传资料，请先停止录音。'
+      return
+    }
+
     assetUploading.value = true
     assetErrorMessage.value = ''
     try {
-      const activeSession = await ensureSession()
-      const response = await uploadSessionAsset(activeSession.session_id, file, backendBaseUrl.value)
+      const response = await uploadLessonAssetRequest(file, subject.value, backendBaseUrl.value)
       upsertAsset(response.item)
       void pollAssetStatus(response.item.asset_id)
     } catch (error) {
-      assetErrorMessage.value = error instanceof Error ? error.message : '上传课堂素材失败。'
+      assetErrorMessage.value = error instanceof Error ? error.message : '上传资料失败。'
     } finally {
       assetUploading.value = false
     }
   }
 
   return {
-    refreshSessionAssets,
+    refreshLessonAssets,
     uploadLessonAsset,
   }
 }

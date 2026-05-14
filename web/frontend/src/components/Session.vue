@@ -17,6 +17,7 @@ const {
   cameras,
   errorMessage,
   loadingCameras,
+  loadingMicrophones,
   microphone,
   microphones,
   model,
@@ -24,6 +25,7 @@ const {
   recordButtonBusy,
   recording,
   sessionStageLabel,
+  switchingMicrophone,
   subject,
   transcriptCount,
 } = storeToRefs(sessionStore)
@@ -33,14 +35,20 @@ const assetInputRef = ref<HTMLInputElement | null>(null)
 onMounted(() => {
   void sessionStore.fetchMicrophones()
   void sessionStore.fetchCameras()
+  void sessionStore.refreshLessonAssets()
+  navigator.mediaDevices?.addEventListener?.('devicechange', sessionStore.fetchMicrophones)
   navigator.mediaDevices?.addEventListener?.('devicechange', sessionStore.fetchCameras)
 })
 
 onBeforeUnmount(() => {
+  navigator.mediaDevices?.removeEventListener?.('devicechange', sessionStore.fetchMicrophones)
   navigator.mediaDevices?.removeEventListener?.('devicechange', sessionStore.fetchCameras)
 })
 
 function openAssetPicker(): void {
+  if (recording.value || assetUploading.value) {
+    return
+  }
   assetInputRef.value?.click()
 }
 
@@ -52,6 +60,21 @@ async function handleAssetSelected(event: Event): Promise<void> {
     return
   }
   await sessionStore.uploadLessonAsset(file)
+}
+
+async function handleMicrophoneChange(event: Event): Promise<void> {
+  const select = event.target as HTMLSelectElement
+  await sessionStore.selectMicrophone(select.value)
+}
+
+async function handleRecordButtonClick(): Promise<void> {
+  if (!recording.value) {
+    const confirmed = window.confirm('是否确认开始录音？')
+    if (!confirmed) {
+      return
+    }
+  }
+  await sessionStore.toggleRecording()
 }
 
 function assetStatusLabel(status: string): string {
@@ -132,13 +155,21 @@ function formatFileSize(size: number): string {
         <label class="block space-y-2">
           <span class="text-sm font-medium text-[rgb(var(--text-subtle))]">麦克风选择</span>
           <select
-            v-model="microphone"
+            :value="microphone"
             class="w-full rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.12)] bg-[rgb(var(--bg-base))] px-3 py-2.5 outline-none transition focus:border-[rgba(var(--accent),0.45)] focus:ring-2 focus:ring-[rgba(var(--accent),0.18)]"
+            :disabled="loadingMicrophones || switchingMicrophone"
+            @change="handleMicrophoneChange"
           >
             <option v-for="item in microphones" :key="item.id" :value="item.id">
               {{ item.label }}
             </option>
           </select>
+          <p
+            v-if="recording && switchingMicrophone"
+            class="text-xs text-[rgb(var(--text-faint))]"
+          >
+            正在切换麦克风...
+          </p>
         </label>
 
         <label class="block space-y-2">
@@ -164,7 +195,7 @@ function formatFileSize(size: number): string {
             <strong class="text-[rgb(var(--text-main))]">{{ transcriptCount }}</strong>
           </div>
           <div class="mt-2 flex items-center justify-between">
-            <span>课堂素材</span>
+            <span>资料库</span>
             <strong class="text-[rgb(var(--text-main))]">{{ assetCount }}</strong>
           </div>
           <div class="mt-2 flex items-center justify-between">
@@ -182,16 +213,16 @@ function formatFileSize(size: number): string {
         <div class="space-y-3 rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.1)] bg-[rgb(var(--bg-base))] p-3">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <p class="text-sm font-semibold text-[rgb(var(--text-main))]">课堂素材</p>
-              <p class="text-xs text-[rgb(var(--text-faint))]">PDF / PPT / 图片会解析后进入问答检索</p>
+              <p class="text-sm font-semibold text-[rgb(var(--text-main))]">资料库</p>
+              <p class="text-xs text-[rgb(var(--text-faint))]">录音前上传，问答时手动选择参与 RAG</p>
             </div>
             <button
               type="button"
               class="shrink-0 rounded-[var(--radius-soft)] bg-[rgba(var(--accent),0.12)] px-3 py-2 text-sm font-semibold text-[rgb(var(--accent))] transition hover:bg-[rgba(var(--accent),0.18)] disabled:cursor-not-allowed disabled:opacity-60"
-              :disabled="assetUploading"
+              :disabled="assetUploading || recording"
               @click="openAssetPicker"
             >
-              {{ assetUploading ? '上传中' : '上传' }}
+              {{ assetUploading ? '上传中' : recording ? '录音中禁用' : '上传' }}
             </button>
             <input
               ref="assetInputRef"
@@ -257,7 +288,7 @@ function formatFileSize(size: number): string {
       class="mt-4 inline-flex items-center justify-center rounded-[var(--radius-soft)] px-4 py-3 font-semibold text-[rgb(var(--text-inverse))] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
       :class="recording ? 'bg-[rgb(var(--danger))]' : 'bg-[rgb(var(--accent))]'"
       :disabled="recordButtonBusy"
-      @click="sessionStore.toggleRecording"
+      @click="handleRecordButtonClick"
     >
       {{ recordButtonBusy ? '准备中...' : recording ? '停止录音' : '开始录音' }}
     </button>
