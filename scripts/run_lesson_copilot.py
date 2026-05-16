@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import sys
@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from web.backend.app.services.lesson_copilot_service import lesson_copilot_service
+from src.application.lesson_copilot.service import lesson_copilot_service
 
 
 def parse_args() -> argparse.Namespace:

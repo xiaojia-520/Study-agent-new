@@ -228,11 +228,16 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 ├─ scripts/                       # 模型下载、RAG 脚本、copilot 运行脚本
 ├─ src/
 │  ├─ application/                # 业务用例层
+│  │  ├─ chat/
+│  │  ├─ documents/
+│  │  ├─ live_classroom/
 │  │  ├─ lesson_copilot/
 │  │  ├─ lesson_notes/
 │  │  ├─ rag/
+│  │  ├─ review/
 │  │  ├─ runtime/
 │  │  ├─ speech/
+│  │  ├─ transcripts/
 │  │  └─ video/
 │  ├─ core/                       # 模型 / 音频 / 知识库核心能力
 │  ├─ domain/                     # 领域对象
@@ -240,8 +245,14 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 ├─ tests/
 └─ web/
    ├─ backend/
-   │  ├─ app/api/                 # FastAPI 路由
-   │  └─ app/services/            # Web 侧服务编排
+   │  └─ app/
+   │     ├─ api/                  # FastAPI 路由，按 sessions/history/assets/videos/learning 拆分
+   │     ├─ dependencies.py       # Web 侧服务装配与生命周期
+   │     ├─ execution.py          # 同步重任务线程化执行
+   │     ├─ presenters.py         # Web 响应转换
+   │     ├─ schemas.py            # Web 请求模型
+   │     ├─ uploads.py            # 上传流写入工具
+   │     └─ tasks.py              # Web 后台任务适配
    └─ frontend/
       └─ src/
 ```

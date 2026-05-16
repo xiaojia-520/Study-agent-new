@@ -1,9 +1,9 @@
-import time
+﻿import time
 import unittest
 from unittest.mock import patch
 
 from src.domain.session import RealtimeSession
-from web.backend.app.services.realtime_speech_service import RealtimeSpeechService
+from src.application.live_classroom.realtime_speech_service import RealtimeSpeechService
 
 
 class FakeSender:
@@ -40,9 +40,9 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         }
 
         with (
-            patch("web.backend.app.services.realtime_speech_service.session_manager.get_session", return_value=session),
+            patch("src.application.live_classroom.realtime_speech_service.session_manager.get_session", return_value=session),
             patch(
-                "web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.append_realtime_transcript",
+                "src.application.live_classroom.realtime_speech_service.knowledge_ingestion_service.append_realtime_transcript",
                 return_value=persisted_record,
             ) as append_mock,
         ):
@@ -71,14 +71,14 @@ class RealtimeSpeechServiceTests(unittest.TestCase):
         )
 
         with (
-            patch("web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.flush_session") as flush_mock,
-            patch("web.backend.app.services.realtime_speech_service.knowledge_ingestion_service.release_session") as release_mock,
+            patch("src.application.live_classroom.realtime_speech_service.knowledge_ingestion_service.flush_session") as flush_mock,
+            patch("src.application.live_classroom.realtime_speech_service.knowledge_ingestion_service.release_session") as release_mock,
             patch(
-                "web.backend.app.services.realtime_speech_service.session_manager.mark_disconnected",
+                "src.application.live_classroom.realtime_speech_service.session_manager.mark_disconnected",
                 return_value=session,
             ),
             patch(
-                "web.backend.app.services.realtime_speech_service.session_manager.next_event_seq",
+                "src.application.live_classroom.realtime_speech_service.session_manager.next_event_seq",
                 return_value=1,
             ),
         ):

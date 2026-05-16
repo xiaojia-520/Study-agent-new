@@ -1,4 +1,4 @@
-import time
+﻿import time
 import unittest
 from io import BytesIO
 from threading import Event
@@ -6,7 +6,7 @@ from threading import Event
 from PIL import Image
 
 from src.domain.session import RealtimeSession
-from web.backend.app.services.session_vision_service import LocalPaddleOcrExtractor, SessionVisionService
+from src.application.live_classroom.vision_service import LocalPaddleOcrExtractor, SessionVisionService
 
 
 class FakeExtractor:

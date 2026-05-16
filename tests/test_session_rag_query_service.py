@@ -1,11 +1,11 @@
-import unittest
+﻿import unittest
 from types import SimpleNamespace
 
 from src.core.knowledge.document_models import SearchResult
 from src.core.knowledge.query_filters import MetadataFilterSpec
 from src.domain.session import RealtimeSession
-from web.backend.app.services.chat_memory_service import ChatMemoryTurn
-from web.backend.app.services.session_rag_query_service import ClassroomContextMode, QueryScope, SessionRagQueryService
+from src.application.chat.memory_service import ChatMemoryTurn
+from src.application.rag.session_query_service import ClassroomContextMode, QueryScope, SessionRagQueryService
 
 
 class FakeQueryService:

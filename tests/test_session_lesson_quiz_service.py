@@ -1,8 +1,8 @@
-import unittest
+﻿import unittest
 from types import SimpleNamespace
 
 from src.domain.session import RealtimeSession
-from web.backend.app.services.session_lesson_quiz_service import SessionLessonQuizService
+from src.application.review.lesson_quiz_service import SessionLessonQuizService
 
 
 class FakeLLM:

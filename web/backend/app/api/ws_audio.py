@@ -1,17 +1,14 @@
-# 允许使用 Python 3.10+ 的类型注解延迟解析（避免循环引用问题）
+﻿# 允许使用 Python 3.10+ 的类型注解延迟解析（避免循环引用问题）
 from __future__ import annotations
 
 # 异步编程库
 import asyncio
 
 # FastAPI 提供的 WebSocket 相关组件
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-# 实时语音服务（你自己封装的业务逻辑）
-from web.backend.app.services.realtime_speech_service import realtime_speech_service
-
-# 会话管理器（用于管理 session 生命周期）
-from src.application.runtime.session_manager import session_manager
+from src.application.container import ApplicationServices
+from web.backend.app.dependencies import get_backend_services
 
 # 创建一个路由器，并打上标签
 router = APIRouter(tags=["realtime-audio"])
@@ -19,9 +16,13 @@ router = APIRouter(tags=["realtime-audio"])
 
 # 定义 WebSocket 路由，路径中包含 session_id
 @router.websocket("/ws/audio/{session_id}")
-async def ws_audio(websocket: WebSocket, session_id: str):
+async def ws_audio(
+    websocket: WebSocket,
+    session_id: str,
+    services: ApplicationServices = Depends(get_backend_services),
+):
     # 根据 session_id 获取会话对象
-    session = session_manager.get_session(session_id)
+    session = services.session_manager.get_session(session_id)
 
     # 如果 session 不存在，关闭连接（4404 类似 HTTP 404）
     if session is None:
@@ -32,13 +33,13 @@ async def ws_audio(websocket: WebSocket, session_id: str):
     await websocket.accept()
 
     # 标记该 session 已连接
-    session_manager.mark_connected(session_id)
+    services.session_manager.mark_connected(session_id)
 
     # 获取当前事件循环（用于后续异步任务）
     loop = asyncio.get_running_loop()
 
     # 创建语音处理流水线（ASR、VAD 等）
-    pipeline = realtime_speech_service.create_pipeline(
+    pipeline = services.realtime_speech.create_pipeline(
         websocket=websocket,
         loop=loop,
         session=session,
@@ -46,7 +47,7 @@ async def ws_audio(websocket: WebSocket, session_id: str):
 
     # 通知前端：session 已开始
     await websocket.send_json(
-        await realtime_speech_service.make_session_started_payload(session)
+        await services.realtime_speech.make_session_started_payload(session)
     )
 
     # 用于控制“指标发送频率”的时间戳
@@ -63,7 +64,7 @@ async def ws_audio(websocket: WebSocket, session_id: str):
             # ===== 处理音频数据（二进制）=====
             if message.get("bytes"):
                 # 处理音频数据（如语音识别）
-                last_metrics_at, metrics_payload = await realtime_speech_service.process_audio_message(
+                last_metrics_at, metrics_payload = await services.realtime_speech.process_audio_message(
                     session_id=session_id,
                     audio_bytes=message["bytes"],
                     pipeline=pipeline,
@@ -81,7 +82,7 @@ async def ws_audio(websocket: WebSocket, session_id: str):
                 # 心跳检测：ping → pong
                 if text == "ping":
                     await websocket.send_json(
-                        await realtime_speech_service.make_pong_payload(session_id)
+                        await services.realtime_speech.make_pong_payload(session_id)
                     )
 
     # 客户端断开连接（正常情况）
@@ -93,7 +94,7 @@ async def ws_audio(websocket: WebSocket, session_id: str):
         try:
             # 向前端发送错误信息
             await websocket.send_json(
-                await realtime_speech_service.make_error_payload(session_id, exc)
+                await services.realtime_speech.make_error_payload(session_id, exc)
             )
         except Exception:
             # 如果发送失败（连接可能已断）
@@ -102,7 +103,7 @@ async def ws_audio(websocket: WebSocket, session_id: str):
     # 无论如何都会执行（清理资源）
     finally:
         # 关闭 session，释放 pipeline
-        stopped_payload = await realtime_speech_service.shutdown_session(
+        stopped_payload = await services.realtime_speech.shutdown_session(
             session_id, pipeline
         )
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _ensure_dir(path: Path) -> Path:
@@ -9,6 +9,12 @@ def _ensure_dir(path: Path) -> Path:
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=Path(__file__).resolve().parent / ".env",
+        env_file_encoding="utf-8",
+    )
+
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
     WEB_HOST: str = "127.0.0.1"
     WEB_PORT: int = 8000
@@ -20,11 +26,18 @@ class Settings(BaseSettings):
     VIDEO_SUBTITLE_DIR: Path = _ensure_dir(DATA_DIR / "video_subtitles")
     MINERU_RESULT_DIR: Path = _ensure_dir(DATA_DIR / "mineru_results")
     QDRANT_LOCAL_DIR: Path = _ensure_dir(DATA_DIR / "qdrant")
+    DATABASE_BACKEND: str = "sqlite"
+    DATABASE_URL: str = "postgresql://study_agent@127.0.0.1:5432/study_agent"
+    DATABASE_POOL_MIN_SIZE: int = 1
+    DATABASE_POOL_MAX_SIZE: int = 20
+    DATABASE_POOL_TIMEOUT_SECONDS: float = 10.0
     SQLITE_DB_PATH: Path = DATA_DIR / "study_agent.sqlite3"
     REDIS_URL: str = ""
     SESSION_REDIS_PREFIX: str = "study-agent:sessions"
     SESSION_REDIS_TTL_SECONDS: int = 24 * 60 * 60
     SESSION_REDIS_TERMINAL_TTL_SECONDS: int = 6 * 60 * 60
+    BACKGROUND_TASK_WORKERS: int = 2
+    BACKGROUND_TASK_QUEUE_SIZE: int = 128
 
     MODEL_BASE_DIR: Path = _ensure_dir(BASE_DIR / "models")
     ASR_MODEL_DIR: Path = _ensure_dir(MODEL_BASE_DIR / "asr")
@@ -50,6 +63,7 @@ class Settings(BaseSettings):
     ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh-streaming"
     ASR_OFFLINE_MODEL_KEY: str = "paraformer-zh"
     ASR_WARMUP_OFFLINE_MODEL: bool = True
+    ASR_INFERENCE_MAX_CONCURRENCY: int = 1
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR
     ASR_MODEL_NAME: str = str(ASR_LOCAL_MODEL_PATH / ASR_MODEL_PATH[ASR_OFFLINE_MODEL_KEY])
 
@@ -115,11 +129,5 @@ class Settings(BaseSettings):
     MINERU_AUTO_INDEX_ENABLED: bool = True
     MINERU_MAX_UPLOAD_BYTES: int = 200 * 1024 * 1024
     VIDEO_MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024 * 1024
-
-    class Config:
-        case_sensitive = True
-        env_file = Path(__file__).resolve().parent / ".env"
-        env_file_encoding = "utf-8"
-
 
 settings = Settings()

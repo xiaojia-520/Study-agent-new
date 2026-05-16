@@ -14,6 +14,7 @@ requests
 huggingface_hub
 modelscope
 redis
+psycopg[binary,pool]
 
 # Embedding runtime
 sentence-transformers

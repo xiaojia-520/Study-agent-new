@@ -1,4 +1,4 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,7 +7,7 @@ from src.application.lesson_notes import LessonNoteService
 from src.domain.lesson_note import LessonNoteStatus
 from src.infrastructure.storage.lesson_note_repository import SQLiteLessonNoteRepository
 from src.infrastructure.storage.sqlite_store import SQLiteStore
-from web.backend.app.services.transcript_service import TranscriptService
+from src.application.transcripts.service import TranscriptService
 
 
 class FakeLLM:

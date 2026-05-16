@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.application.rag.eval import build_session_registry, evaluate_cases, load_eval_cases
 from src.application.rag.runtime import build_rag_runtime
-from web.backend.app.services.session_rag_query_service import SessionRagQueryService
+from src.application.rag.session_query_service import SessionRagQueryService
 
 
 def parse_args() -> argparse.Namespace:

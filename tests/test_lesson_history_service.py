@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,8 +8,8 @@ from config.settings import settings
 from src.infrastructure.storage.lesson_note_repository import SQLiteLessonNoteRepository
 from src.infrastructure.storage.sqlite_store import SQLiteStore
 from src.infrastructure.storage.qdrant_index_store import QdrantIndexStoreConfig
-from web.backend.app.services.lesson_history_service import LessonHistoryService
-from web.backend.app.services.session_video_service import SessionVideoService
+from src.application.review.lesson_history_service import LessonHistoryService
+from src.application.video.video_service import SessionVideoService
 
 
 class FakeIndexStore:

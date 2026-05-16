@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config.settings import settings
+from src.infrastructure.storage.database import DatabaseStore
 
 
-class SQLiteStore:
+class SQLiteStore(DatabaseStore):
     def __init__(self, db_path: Path | str | None = None) -> None:
         self.db_path = Path(db_path or settings.SQLITE_DB_PATH)
         self._lock = threading.RLock()
@@ -153,11 +154,27 @@ class SQLiteStore:
                 conn.commit()
                 return int(cursor.lastrowid or 0)
 
+    def execute_many(self, sql: str, param_sets: Iterable[Iterable[Any]]) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                conn.executemany(sql, [tuple(params) for params in param_sets])
+                conn.commit()
+
     def query_all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         with self._lock:
             with self._connect() as conn:
                 cursor = conn.execute(sql, tuple(params))
                 return [dict(row) for row in cursor.fetchall()]
+
+    def query_one(self, sql: str, params: Iterable[Any] = ()) -> dict[str, Any] | None:
+        with self._lock:
+            with self._connect() as conn:
+                cursor = conn.execute(sql, tuple(params))
+                row = cursor.fetchone()
+                return dict(row) if row is not None else None
+
+    def close(self) -> None:
+        return None
 
     def _connect(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

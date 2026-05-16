@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
 from src.domain.session import RealtimeSession
-from web.backend.app.services.session_video_service import SessionVideoService
+from src.application.video.video_service import SessionVideoService
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ def test_session_video_service_rebuilds_rag_with_final_transcripts(tmp_path, mon
     )
 
     with patch(
-        "web.backend.app.services.session_video_service.session_transcript_refine_service.enqueue_session"
+        "src.application.video.video_service.session_transcript_refine_service.enqueue_session"
     ) as enqueue_mock:
         service.process_video(video.video_id)
 
@@ -201,7 +201,7 @@ def test_session_video_service_refreshes_refined_video_subtitles(tmp_path, monke
     source_record_id = int(transcript_items[0]["id"])
 
     with patch(
-        "web.backend.app.services.session_video_service.session_transcript_refine_service.list_session_refined_transcripts",
+        "src.application.video.video_service.session_transcript_refine_service.list_session_refined_transcripts",
         return_value=[SimpleNamespace(source_record_id=source_record_id, refined_text="hello refined")],
     ):
         service.refresh_refined_video_subtitles("session-1")

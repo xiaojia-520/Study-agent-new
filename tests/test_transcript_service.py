@@ -1,9 +1,9 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
-from web.backend.app.services.transcript_service import TranscriptService
+from src.application.transcripts.service import TranscriptService
 
 
 class TranscriptServiceTests(unittest.TestCase):

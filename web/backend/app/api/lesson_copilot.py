@@ -1,32 +1,33 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
-from web.backend.app.services.lesson_copilot_service import (
-    lesson_copilot_result_to_dict,
-    lesson_copilot_service,
-)
+from src.application.container import ApplicationServices
+from web.backend.app.dependencies import get_backend_services
+from web.backend.app.execution import run_blocking
+from web.backend.app.presenters import lesson_copilot_result_to_dict
+from web.backend.app.schemas import LessonCopilotRequest
 
 router = APIRouter(prefix="/lessons", tags=["lesson-copilot"])
 
 
-class LessonCopilotRequest(BaseModel):
-    message: str
-    session_id: str | None = None
-
-
 @router.post("/{course_id}/{lesson_id}/copilot")
-async def run_lesson_copilot(course_id: str, lesson_id: str, payload: LessonCopilotRequest):
+async def run_lesson_copilot(
+    course_id: str,
+    lesson_id: str,
+    payload: LessonCopilotRequest,
+    services: ApplicationServices = Depends(get_backend_services),
+):
     message = (payload.message or "").strip()
     if not message:
         raise HTTPException(status_code=422, detail="message is required")
 
     try:
-        result = lesson_copilot_service.run(
+        result = await run_blocking(
+            services.lesson_copilot.run,
             course_id=course_id,
             lesson_id=lesson_id,
             session_id=payload.session_id,
@@ -43,13 +44,18 @@ async def run_lesson_copilot(course_id: str, lesson_id: str, payload: LessonCopi
 
 
 @router.post("/{course_id}/{lesson_id}/copilot/stream")
-async def stream_lesson_copilot(course_id: str, lesson_id: str, payload: LessonCopilotRequest):
+async def stream_lesson_copilot(
+    course_id: str,
+    lesson_id: str,
+    payload: LessonCopilotRequest,
+    services: ApplicationServices = Depends(get_backend_services),
+):
     message = (payload.message or "").strip()
     if not message:
         raise HTTPException(status_code=422, detail="message is required")
 
     def event_stream():
-        for item in lesson_copilot_service.stream(
+        for item in services.lesson_copilot.stream(
             course_id=course_id,
             lesson_id=lesson_id,
             session_id=payload.session_id,

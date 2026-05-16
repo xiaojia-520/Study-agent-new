@@ -1,4 +1,4 @@
-import io
+﻿import io
 import json
 import tempfile
 import unittest
@@ -8,12 +8,12 @@ from types import SimpleNamespace
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
 from src.domain.session import RealtimeSession
-from web.backend.app.services.lesson_asset_service import (
+from src.application.documents.asset_service import (
     LessonAssetService,
     MineruExtractResult,
     MineruUploadBatch,
 )
-from web.backend.app.services.transcript_service import TranscriptService
+from src.application.transcripts.service import TranscriptService
 
 
 class FakeMineruClient:

@@ -5,11 +5,12 @@ import time
 from typing import Any, Mapping
 
 from src.domain.lesson_note import LessonNote, LessonNoteStatus
-from src.infrastructure.storage.sqlite_store import SQLiteStore, sqlite_store
+from src.infrastructure.storage.database import DatabaseStore
+from src.infrastructure.storage.runtime import database_store
 
 
-class SQLiteLessonNoteRepository:
-    def __init__(self, *, store: SQLiteStore = sqlite_store) -> None:
+class LessonNoteSqlRepository:
+    def __init__(self, *, store: DatabaseStore = database_store) -> None:
         self.store = store
 
     def init_schema(self) -> None:
@@ -156,6 +157,9 @@ class SQLiteLessonNoteRepository:
             (course_id, lesson_id),
         )
         return _row_to_note(rows[0]) if rows else None
+
+
+SQLiteLessonNoteRepository = LessonNoteSqlRepository
 
 
 def _row_to_note(row: Mapping[str, Any]) -> LessonNote:

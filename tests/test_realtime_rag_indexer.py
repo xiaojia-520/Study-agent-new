@@ -1,10 +1,10 @@
-import threading
+﻿import threading
 import time
 import unittest
 from types import SimpleNamespace
 
 from src.domain.session import RealtimeSession
-from web.backend.app.services.realtime_rag_indexer import RealtimeRagIndexer
+from src.application.rag.realtime_indexer import RealtimeRagIndexer
 
 
 class FakeIndexingService:

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import asdict
 from typing import Any
@@ -6,15 +6,15 @@ from typing import Any
 
 class LessonCopilotAdapter:
     def __init__(self) -> None:
-        from web.backend.app.services.chat_memory_service import chat_memory_service
-        from web.backend.app.services.lesson_asset_service import lesson_asset_service
-        from web.backend.app.services.lesson_note_service import lesson_note_service, lesson_note_to_dict
-        from web.backend.app.services.session_lesson_quiz_service import session_lesson_quiz_service
-        from web.backend.app.services.session_lesson_summary_service import session_lesson_summary_service
-        from web.backend.app.services.session_rag_query_service import ClassroomContextMode, QueryScope, session_rag_query_service
-        from web.backend.app.services.session_transcript_refine_service import session_transcript_refine_service
-        from web.backend.app.services.session_video_service import session_video_service
-        from web.backend.app.services.transcript_service import transcript_service
+        from src.application.chat.memory_service import chat_memory_service
+        from src.application.documents.asset_service import lesson_asset_service
+        from src.application.lesson_notes.runtime import lesson_note_service, lesson_note_to_dict
+        from src.application.review.lesson_quiz_service import session_lesson_quiz_service
+        from src.application.review.lesson_summary_service import session_lesson_summary_service
+        from src.application.rag.session_query_service import ClassroomContextMode, QueryScope, session_rag_query_service
+        from src.application.transcripts.refinement_service import session_transcript_refine_service
+        from src.application.video.video_service import session_video_service
+        from src.application.transcripts.service import transcript_service
 
         self.chat_memory_service = chat_memory_service
         self.lesson_asset_service = lesson_asset_service

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
@@ -7,7 +7,7 @@ from typing import Iterable, Mapping, Sequence
 
 from src.core.knowledge.document_models import KnowledgeAnswer
 from src.domain.session import RealtimeSession
-from web.backend.app.services.session_rag_query_service import QueryScope, SessionRagQueryService
+from src.application.rag.session_query_service import QueryScope, SessionRagQueryService
 
 
 @dataclass(slots=True)

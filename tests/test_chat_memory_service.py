@@ -1,10 +1,10 @@
-import tempfile
+﻿import tempfile
 import unittest
 from pathlib import Path
 
 from src.infrastructure.storage.sqlite_store import SQLiteStore
 from src.domain.session import RealtimeSession
-from web.backend.app.services.chat_memory_service import ChatMemoryService
+from src.application.chat.memory_service import ChatMemoryService
 
 
 class ChatMemoryServiceTests(unittest.TestCase):
