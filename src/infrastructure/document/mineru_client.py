@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import requests
 
@@ -58,14 +58,43 @@ class MineruClient:
         enable_table: bool,
         is_ocr: bool,
     ) -> MineruUploadBatch:
-        payload = {
-            "files": [
+        return self.create_upload_batch_for_files(
+            files=(
                 {
                     "name": file_name,
                     "data_id": data_id,
                     "is_ocr": is_ocr,
-                }
-            ],
+                },
+            ),
+            model_version=model_version,
+            language=language,
+            enable_formula=enable_formula,
+            enable_table=enable_table,
+        )
+
+    def create_upload_batch_for_files(
+        self,
+        *,
+        files: Sequence[Mapping[str, Any]],
+        model_version: str,
+        language: str,
+        enable_formula: bool,
+        enable_table: bool,
+    ) -> MineruUploadBatch:
+        normalized_files = [
+            {
+                "name": str(item.get("name") or "").strip(),
+                "data_id": str(item.get("data_id") or "").strip(),
+                "is_ocr": bool(item.get("is_ocr", False)),
+            }
+            for item in files
+            if str(item.get("name") or "").strip() and str(item.get("data_id") or "").strip()
+        ]
+        if not normalized_files:
+            raise MineruApiError("MinerU batch upload requires at least one file")
+
+        payload = {
+            "files": normalized_files,
             "model_version": model_version,
             "language": language,
             "enable_formula": enable_formula,
@@ -76,6 +105,8 @@ class MineruClient:
         file_urls = tuple(str(url) for url in data.get("file_urls") or [] if str(url).strip())
         if not batch_id or not file_urls:
             raise MineruApiError("MinerU did not return a batch_id and upload URL")
+        if len(file_urls) != len(normalized_files):
+            raise MineruApiError("MinerU did not return the expected number of upload URLs")
         return MineruUploadBatch(batch_id=batch_id, file_urls=file_urls)
 
     def upload_file(self, upload_url: str, file_path: Path) -> None:

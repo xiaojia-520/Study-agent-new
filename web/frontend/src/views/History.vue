@@ -11,7 +11,6 @@ import {
   fetchRefinedLessonTranscripts,
   querySession,
 } from '../api/studyAgent'
-import ResizableSplit from '../components/common/ResizableSplit.vue'
 import LessonVideoReview from '../components/history/LessonVideoReview.vue'
 import SideBar from '../components/history/SideBar.vue'
 import { useSessionStore } from '../stores/session'
@@ -33,7 +32,6 @@ const messages = ref<LessonMessageItem[]>([])
 const transcripts = ref<TranscriptRecordItem[]>([])
 const refinedTranscripts = ref<RefinedTranscriptRecordItem[]>([])
 const transcriptViewMode = ref<'raw' | 'refined'>('raw')
-const historySplitRatio = ref(44)
 const loadingMessages = ref(false)
 const loadingTranscripts = ref(false)
 const loadingRefinedTranscripts = ref(false)
@@ -127,6 +125,18 @@ async function loadRefinedLessonTranscripts(courseId: string, lessonId: string):
   } finally {
     loadingRefinedTranscripts.value = false
   }
+}
+
+async function refreshLessonTranscriptPanels(): Promise<void> {
+  const lesson = selectedLesson.value
+  if (!lesson?.course_id || !lesson.lesson_id) {
+    return
+  }
+
+  await Promise.all([
+    loadLessonTranscripts(lesson.course_id, lesson.lesson_id),
+    loadRefinedLessonTranscripts(lesson.course_id, lesson.lesson_id),
+  ])
 }
 
 async function ensureReviewSession(): Promise<SessionInfo> {
@@ -280,7 +290,7 @@ function formatTimelineTime(timestamp?: number): string {
 </script>
 
 <template>
-  <div class="flex h-screen min-h-0 flex-col overflow-hidden bg-[rgb(var(--bg-base))]">
+  <div class="min-h-screen bg-[rgb(var(--bg-base))]">
     <header class="border-b border-[rgba(var(--line-soft),0.08)] bg-[#fffaf2]/90 backdrop-blur-md">
       <div class="mx-auto flex h-16 w-full max-w-[1600px] items-center justify-between gap-4 px-4 md:px-6">
         <div>
@@ -299,12 +309,12 @@ function formatTimelineTime(timestamp?: number): string {
       </div>
     </header>
 
-    <main class="min-h-0 flex-1 overflow-hidden p-3">
-      <div class="grid h-full min-h-0 gap-3 lg:grid-cols-[360px_1fr]">
-        <SideBar ref="sidebarRef" class="min-h-0" @select="selectLesson" />
+    <main class="p-3">
+      <div class="grid items-start gap-3 lg:grid-cols-[360px_1fr]">
+        <SideBar ref="sidebarRef" @select="selectLesson" />
 
         <section
-          class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-5"
+          class="flex flex-col rounded-[var(--radius-soft)] border border-[rgba(var(--line-soft),0.08)] bg-[rgb(var(--bg-elevated))] p-5"
         >
           <template v-if="selectedLesson">
             <div class="flex shrink-0 items-start justify-between gap-4">
@@ -366,25 +376,18 @@ function formatTimelineTime(timestamp?: number): string {
               </article>
             </div>
 
-            <ResizableSplit
-              v-model="historySplitRatio"
-              class="mt-5 min-h-0 flex-1"
-              direction="horizontal"
-              :min="28"
-              :max="72"
-            >
-              <template #before>
+            <div class="mt-5 space-y-4">
+              <div class="h-[62vh] min-h-[520px] max-h-[760px]">
                 <LessonVideoReview
                   class="h-full"
                   :course-id="selectedLesson.course_id"
                   :lesson-id="selectedLesson.lesson_id"
+                  @transcripts-updated="refreshLessonTranscriptPanels"
                 />
-              </template>
+              </div>
 
-              <template #after>
-                <div class="flex h-full min-h-0 flex-col overflow-hidden">
-                  <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
-                    <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
+              <div class="grid gap-4 lg:grid-cols-2">
+                <article class="flex flex-col rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
                       <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
                         <div>
                           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
@@ -397,7 +400,7 @@ function formatTimelineTime(timestamp?: number): string {
                         </span>
                       </div>
 
-                      <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                      <div class="p-4">
                         <p
                           v-if="messageError"
                           class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
@@ -476,9 +479,9 @@ function formatTimelineTime(timestamp?: number): string {
                           {{ reviewSession ? `Review session ${reviewSession.session_id.slice(0, 8)}` : '发送时会自动创建 review session' }}
                         </p>
                       </form>
-                    </article>
+                </article>
 
-                    <article class="flex min-h-0 flex-col overflow-hidden rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
+                <article class="flex flex-col rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))]">
                       <div class="flex shrink-0 items-center justify-between border-b border-[rgba(var(--line-soft),0.08)] px-4 py-3">
                         <div>
                           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-[rgb(var(--text-faint))]">
@@ -511,7 +514,7 @@ function formatTimelineTime(timestamp?: number): string {
                         </div>
                       </div>
 
-                      <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                      <div class="p-4">
                         <p
                           v-if="activeTranscriptError"
                           class="rounded-[var(--radius-soft)] border border-[rgba(var(--danger),0.18)] bg-[rgba(var(--danger),0.08)] px-3 py-2 text-sm text-[rgb(var(--danger))]"
@@ -579,11 +582,9 @@ function formatTimelineTime(timestamp?: number): string {
                           </template>
                         </div>
                       </div>
-                    </article>
-                  </div>
-                </div>
-              </template>
-            </ResizableSplit>
+                </article>
+              </div>
+            </div>
           </template>
 
           <div

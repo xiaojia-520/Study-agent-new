@@ -9,9 +9,10 @@ from web.backend.app.api.sessions import router as sessions_router
 from web.backend.app.api.videos import router as videos_router
 
 router = APIRouter()
-router.include_router(sessions_router)
+# Register static history routes before dynamic session_id routes so
+# `/sessions/history/*` is not swallowed by `/sessions/{session_id}/*`.
 router.include_router(history_router)
+router.include_router(sessions_router)
 router.include_router(assets_router)
 router.include_router(videos_router)
 router.include_router(learning_router)
-

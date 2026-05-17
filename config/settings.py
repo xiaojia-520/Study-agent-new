@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     RAG_LLM_MAX_TOKENS: int | None = None
     RAG_LLM_TIMEOUT: float = 60.0
 
-    MINERU_API_TOKEN: str = ""
+    MINERU_API_TOKEN: str = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI1NDEwMDMzNSIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3ODk3Nzg3NCwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiOGI5M2E2MWUtZWMwYi00MWVjLWIxZTQtZjY3ZjJhOGE5MTJjIiwiZW1haWwiOiIiLCJleHAiOjE3ODY3NTM4NzR9.QFjfmPfVQSPkambo5Fgz9JLm0uzngSuHEnJEPBcm-ll4urgL5GarZrpFL9p6Q4PiCiZDZ-DACpVpclPJGzhDFw"
     MINERU_BASE_URL: str = "https://mineru.net"
     MINERU_MODEL_VERSION: str = "vlm"
     MINERU_LANGUAGE: str = "ch"

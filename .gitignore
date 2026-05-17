@@ -63,6 +63,7 @@ lerna-debug.log*
 build/
 *.egg-info/
 repo.bundle
+ClaudeCode/
 
 ############################
 # Runtime data / outputs

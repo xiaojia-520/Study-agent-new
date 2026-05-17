@@ -768,6 +768,7 @@ async function pollVideoStatus(videoId: string, startedAt: number): Promise<void
     if (response.item.status === 'done') {
       processingVideo.value = false
       videoStatusMessage.value = `字幕已生成，共 ${response.item.segment_count} 段。`
+      await sessionStore.hydrateTranscriptsFromServer()
       return
     }
 

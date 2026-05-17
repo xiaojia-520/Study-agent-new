@@ -11,6 +11,9 @@ const props = defineProps<{
   courseId?: string | null
   lessonId?: string | null
 }>()
+const emit = defineEmits<{
+  (event: 'transcripts-updated'): void
+}>()
 
 const sessionStore = useSessionStore()
 const { backendBaseUrl } = storeToRefs(sessionStore)
@@ -115,6 +118,7 @@ async function refreshPendingVideos(): Promise<void> {
   }
 
   try {
+    const previousById = new Map(videos.value.map((item) => [item.video_id, item]))
     const updates = await Promise.all(
       uniqueTargets.map((item) => fetchSessionVideo(item.video_id, backendBaseUrl.value)),
     )
@@ -122,6 +126,9 @@ async function refreshPendingVideos(): Promise<void> {
     const byId = new Map(updates.map((item) => [item.item.video_id, item.item]))
 
     videos.value = videos.value.map((item) => byId.get(item.video_id) ?? item)
+    if (didVideoTranscriptStateAdvance(previousById, byId)) {
+      emit('transcripts-updated')
+    }
 
     updateStatusMessage()
     schedulePoll()
@@ -129,6 +136,32 @@ async function refreshPendingVideos(): Promise<void> {
     errorMessage.value = error instanceof Error ? error.message : '刷新字幕状态失败。'
     clearPollTimer()
   }
+}
+
+function didVideoTranscriptStateAdvance(
+  previousById: Map<string, SessionVideoItem>,
+  updatesById: Map<string, SessionVideoItem>,
+): boolean {
+  for (const [videoId, nextItem] of updatesById.entries()) {
+    const previousItem = previousById.get(videoId)
+    if (!previousItem) {
+      if (nextItem.status === 'done') {
+        return true
+      }
+      continue
+    }
+
+    if (previousItem.status !== 'done' && nextItem.status === 'done') {
+      return true
+    }
+
+    const previousRefinedAt = Number(previousItem.metadata?.subtitle_refined_at || 0)
+    const nextRefinedAt = Number(nextItem.metadata?.subtitle_refined_at || 0)
+    if (nextRefinedAt > previousRefinedAt) {
+      return true
+    }
+  }
+  return false
 }
 
 function updateStatusMessage(): void {
