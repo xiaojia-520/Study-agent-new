@@ -26,14 +26,17 @@ async def startup_backend_runtime(logger) -> None:
     background_task_queue.start()
     logger.info("Backend startup: session backend is ready")
 
-    warmup_model = resolve_realtime_asr_model(settings.ASR_DEFAULT_MODEL_KEY)
-    logger.info("Backend startup warmup: loading ASR model %s", warmup_model.key)
-    model_hub.load_asr_model(model_name=warmup_model.resolved_model_name)
-    if settings.ASR_WARMUP_OFFLINE_MODEL:
-        logger.info("Backend startup warmup: loading FunASR offline model")
-        model_hub.load_funasr_model()
+    if settings.ASR_RUNTIME_BACKEND.strip().lower() in {"process", "worker", "remote", "external", "client"}:
+        logger.info("Backend startup warmup: ASR runs outside the main process; skipping main-process ASR warmup")
     else:
-        logger.info("Backend startup warmup: skipping FunASR offline model")
+        warmup_model = resolve_realtime_asr_model(settings.ASR_DEFAULT_MODEL_KEY)
+        logger.info("Backend startup warmup: loading ASR model %s", warmup_model.key)
+        model_hub.load_asr_model(model_name=warmup_model.resolved_model_name)
+        if settings.ASR_WARMUP_OFFLINE_MODEL:
+            logger.info("Backend startup warmup: loading FunASR offline model")
+            model_hub.load_funasr_model()
+        else:
+            logger.info("Backend startup warmup: skipping FunASR offline model")
     logger.info("Backend startup warmup complete")
 
 
@@ -41,6 +44,7 @@ async def shutdown_backend_runtime(logger) -> None:
     services = get_backend_services()
     _close_all(
         services.realtime_rag_indexer.close,
+        services.realtime_speech.close,
         services.lesson_copilot.close,
         services.lesson_quiz.close,
         services.session_rag_query.close,

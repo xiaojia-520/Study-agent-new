@@ -14,6 +14,13 @@ from web.backend.app.dependencies import get_backend_services
 router = APIRouter(tags=["realtime-audio"])
 
 
+@router.get("/asr/status")
+async def get_asr_status(
+    services: ApplicationServices = Depends(get_backend_services),
+):
+    return await services.realtime_speech.get_asr_status()
+
+
 # 定义 WebSocket 路由，路径中包含 session_id
 @router.websocket("/ws/audio/{session_id}")
 async def ws_audio(

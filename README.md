@@ -13,11 +13,15 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 ### 1.1 实时课堂
 
 - 浏览器采集麦克风音频，通过 WebSocket 发送到后端
-- 后端使用实时 ASR 管线处理音频
+- 后端通过 `AsrGateway` 转发音频到实时 ASR 管线
+- ASR 支持三种运行形态：
+  - `inprocess`：ASR 管线运行在 Web 主进程内
+  - `process`：Web 主进程自动拉起本地 ASR 子进程
+  - `remote`：连接外部独立 ASR worker，支持多 worker 固定路由
 - 支持录音前确认提示、录音中麦克风热切换
 - 同一课程名 15 分钟内再次开始录音时，前端可提示是否接续上一段课堂结果
 - 转写结果写入：
-  - SQLite `transcript_records`
+  - PostgreSQL / SQLite `transcript_records`（由 `DATABASE_BACKEND` 决定）
   - 本地 JSONL 转写文件
   - Qdrant 向量库（实时或准实时）
 - 前端可围绕当前课堂做 RAG 查询
@@ -110,6 +114,9 @@ Study Agent 是一个面向课堂学习场景的本地优先学习系统。它�
 浏览器麦克风
 -> WebSocket /ws/audio/{session_id}
 -> realtime_speech_service
+-> AsrGateway
+-> in-process ASR / local worker / remote worker
+-> partial_transcript / final_transcript
 -> transcript_records + JSONL
 -> realtime_rag_indexer
 -> 前端实时展示 / 课堂问答
@@ -190,7 +197,7 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 - Python 3.10+
 - FastAPI
 - WebSocket
-- SQLite
+- PostgreSQL / SQLite
 - Redis（可选，用于 session backend）
 - Qdrant
 - LlamaIndex
@@ -259,13 +266,12 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 
 ## 6. 数据存储
 
-### 6.1 SQLite
+### 6.1 关系数据库
 
-默认数据库：
+业务数据库通过 `DATABASE_BACKEND` 选择：
 
-```text
-data/study_agent.sqlite3
-```
+- `DATABASE_BACKEND=postgresql`：使用 PostgreSQL，当前 `config/.env` 示例指向 `postgresql://study_agent@127.0.0.1:5432/study_agent`
+- `DATABASE_BACKEND=sqlite`：使用本地 SQLite，默认路径为 `data/study_agent.sqlite3`
 
 当前关键表：
 
@@ -399,6 +405,13 @@ config/.env
 建议最少配置以下变量：
 
 ```env
+# Database
+DATABASE_BACKEND=postgresql
+DATABASE_URL=postgresql://study_agent@127.0.0.1:5432/study_agent
+DATABASE_POOL_MIN_SIZE=1
+DATABASE_POOL_MAX_SIZE=20
+DATABASE_POOL_TIMEOUT_SECONDS=10
+
 # Session backend（可选）
 REDIS_URL=
 SESSION_REDIS_PREFIX=study-agent:sessions
@@ -412,6 +425,16 @@ RAG_REALTIME_INDEXING_ENABLED=true
 RAG_REALTIME_FLUSH_RECORDS=3
 RAG_REALTIME_FLUSH_CHARS=300
 RAG_REALTIME_FLUSH_INTERVAL_SECONDS=20
+
+# Realtime ASR worker
+ASR_RUNTIME_BACKEND=process
+ASR_WORKER_QUEUE_SIZE=512
+ASR_WORKER_CLOSE_TIMEOUT_SECONDS=5
+ASR_WORKER_CONNECT_TIMEOUT_SECONDS=5
+ASR_WORKER_HOST=127.0.0.1
+ASR_WORKER_PORT=8765
+ASR_WORKER_ENDPOINTS=
+ASR_WORKER_AUTH_TOKEN=study-agent-asr
 
 # LLM（建议用于笔记、测验、summary、copilot）
 RAG_ENABLE_LLM=true
@@ -435,6 +458,10 @@ MINERU_AUTO_INDEX_ENABLED=true
 补充说明：
 
 - `ASR_DEVICE=auto`、`EMBED_DEVICE=auto` 会自动解析为可用的 `cuda` 或 `cpu`
+- `DATABASE_BACKEND=postgresql` 时，所有业务表写入 PostgreSQL；`DATABASE_BACKEND=sqlite` 时写入本地 SQLite
+- 实时 ASR 的数据库写入发生在 Web 主服务侧，ASR worker 只负责音频处理和返回转写事件
+- `ASR_RUNTIME_BACKEND=process` 会由 Web 主服务自动拉起本地 ASR 子进程
+- `ASR_RUNTIME_BACKEND=remote` 会连接独立 ASR worker；配置 `ASR_WORKER_ENDPOINTS` 后会启用多 worker，并按 `session_id` 固定路由
 - 不需要 LLM 时，可设 `RAG_ENABLE_LLM=false`
 - 不配置 MinerU 时，实时课堂和普通 RAG 仍可运行，但资料解析功能不可用
 - 配置 `REDIS_URL` 但 Redis 未启动时，后端会在 startup 阶段直接失败
@@ -448,6 +475,29 @@ MINERU_AUTO_INDEX_ENABLED=true
 python -m uvicorn web.backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+独立 ASR worker 模式：
+
+```powershell
+python scripts/run_asr_worker.py --host 127.0.0.1 --port 8765
+```
+
+并在 `config/.env` 中配置：
+
+```env
+ASR_RUNTIME_BACKEND=remote
+ASR_WORKER_HOST=127.0.0.1
+ASR_WORKER_PORT=8765
+ASR_WORKER_AUTH_TOKEN=study-agent-asr
+```
+
+多个独立 ASR worker：
+
+```env
+ASR_RUNTIME_BACKEND=remote
+ASR_WORKER_ENDPOINTS=127.0.0.1:8765,127.0.0.1:8766
+ASR_WORKER_AUTH_TOKEN=study-agent-asr
+```
+
 健康检查：
 
 ```text
@@ -458,6 +508,18 @@ GET http://127.0.0.1:8000/
 
 ```json
 {"status":"ok"}
+```
+
+ASR worker 状态：
+
+```text
+GET http://127.0.0.1:8000/asr/status
+```
+
+示例返回：
+
+```json
+{"backend":"process","healthy":true,"worker_pid":12345,"active_session_count":0}
 ```
 
 ### 10.2 启动前端
@@ -541,6 +603,12 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 ws://127.0.0.1:8000/ws/audio/{session_id}
 ```
 
+实时 ASR 状态：
+
+```text
+GET /asr/status
+```
+
 ### 12.2 Session / History
 
 ```text
@@ -614,6 +682,7 @@ scripts/rag_query.py              # 命令行查询 RAG
 scripts/rag_eval.py               # 评测 RAG
 scripts/video_to_srt.py           # 视频转字幕
 scripts/run_lesson_copilot.py     # 命令行运行 lesson copilot
+scripts/run_asr_worker.py         # 独立实时 ASR worker
 ```
 
 ## 14. 测试与检查
@@ -656,11 +725,12 @@ npm run build
 
 原因通常是：
 
-- 首次加载 ASR / FunASR
+- 使用 `ASR_RUNTIME_BACKEND=inprocess` 时，Web 主进程首次加载 ASR / FunASR
+- 使用 `ASR_RUNTIME_BACKEND=process` 或 `remote` 时，ASR 会在本地子进程、独立 worker 或首次录音时加载
 - 首次加载 embedding / OCR / VLM
 - 本地磁盘或内存不足
 
-建议演示前提前启动一次。
+建议演示前提前启动一次，并访问 `/asr/status` 确认 worker 可用。
 
 ### 15.2 LLM 调用失败
 

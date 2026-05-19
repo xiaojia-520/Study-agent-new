@@ -1,68 +1,95 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from flask import Flask, request, send_from_directory, redirect, url_for, render_template_string
+from werkzeug.utils import secure_filename
+import os
 
-app = FastAPI()
-clients = []
+app = Flask(__name__)
 
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@app.get("/")
-async def index():
-    return HTMLResponse("""
+HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <meta charset="utf-8">
-    <title>内网聊天室</title>
+    <meta charset="UTF-8">
+    <title>局域网文件共享</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+        }
+        h1 {
+            text-align: center;
+        }
+        .upload {
+            padding: 20px;
+            border: 2px dashed #aaa;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .file {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        a {
+            text-decoration: none;
+            color: #0078d7;
+        }
+    </style>
 </head>
 <body>
-    <h2>内网聊天室</h2>
+    <h1>局域网文件共享</h1>
 
-    <input id="name" placeholder="昵称">
-    <br><br>
+    <div class="upload">
+        <form method="post" action="/upload" enctype="multipart/form-data">
+            <input type="file" name="file" required>
+            <button type="submit">上传</button>
+        </form>
+    </div>
 
-    <div id="box" style="width:500px;height:300px;border:1px solid #ccc;overflow:auto;padding:10px;"></div>
+    <h2>可下载文件</h2>
 
-    <br>
-
-    <input id="msg" placeholder="输入消息" style="width:400px;">
-    <button onclick="send()">发送</button>
-
-    <script>
-        const ws = new WebSocket("ws://" + location.host + "/ws");
-
-        ws.onmessage = function(event) {
-            const box = document.getElementById("box");
-            box.innerHTML += "<div>" + event.data + "</div>";
-            box.scrollTop = box.scrollHeight;
-        };
-
-        function send() {
-            const name = document.getElementById("name").value || "匿名";
-            const msg = document.getElementById("msg").value;
-            if (!msg) return;
-
-            ws.send(name + "：" + msg);
-            document.getElementById("msg").value = "";
-        }
-
-        document.getElementById("msg").addEventListener("keydown", function(e) {
-            if (e.key === "Enter") send();
-        });
-    </script>
+    {% if files %}
+        {% for file in files %}
+            <div class="file">
+                <a href="/download/{{ file }}">{{ file }}</a>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>暂无文件</p>
+    {% endif %}
 </body>
 </html>
-    """)
+"""
 
 
-@app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    clients.append(websocket)
+@app.route("/")
+def index():
+    files = os.listdir(UPLOAD_FOLDER)
+    return render_template_string(HTML, files=files)
 
-    try:
-        while True:
-            msg = await websocket.receive_text()
-            for client in clients:
-                await client.send_text(msg)
-    except WebSocketDisconnect:
-        clients.remove(websocket)
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    file = request.files.get("file")
+
+    if not file:
+        return redirect(url_for("index"))
+
+    filename = secure_filename(file.filename)
+
+    if filename == "":
+        return redirect(url_for("index"))
+
+    file.save(os.path.join(UPLOAD_FOLDER, filename))
+    return redirect(url_for("index"))
+
+
+@app.route("/download/<filename>")
+def download(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)

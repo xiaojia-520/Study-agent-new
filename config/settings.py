@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     ASR_OFFLINE_MODEL_KEY: str = "paraformer-zh"
     ASR_WARMUP_OFFLINE_MODEL: bool = True
     ASR_INFERENCE_MAX_CONCURRENCY: int = 1
+    ASR_RUNTIME_BACKEND: str = "process"
+    ASR_WORKER_QUEUE_SIZE: int = 512
+    ASR_WORKER_CLOSE_TIMEOUT_SECONDS: float = 5.0
+    ASR_WORKER_HOST: str = "127.0.0.1"
+    ASR_WORKER_PORT: int = 8765
+    ASR_WORKER_ENDPOINTS: str = ""
+    ASR_WORKER_AUTH_TOKEN: str = "study-agent-asr"
+    ASR_WORKER_CONNECT_TIMEOUT_SECONDS: float = 5.0
     ASR_LOCAL_MODEL_PATH: Path = ASR_MODEL_DIR
     ASR_MODEL_NAME: str = str(ASR_LOCAL_MODEL_PATH / ASR_MODEL_PATH[ASR_OFFLINE_MODEL_KEY])
 

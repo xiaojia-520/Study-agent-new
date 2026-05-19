@@ -2,8 +2,11 @@
 import unittest
 from unittest.mock import patch
 
+import numpy as np
+
 from src.domain.session import RealtimeSession
 from src.application.live_classroom.realtime_speech_service import RealtimeSpeechService
+from src.application.speech.asr_gateway import AsrSessionHandle
 
 
 class FakeSender:
@@ -15,6 +18,55 @@ class FakeSender:
 
 
 class RealtimeSpeechServiceTests(unittest.TestCase):
+    def test_process_audio_message_delegates_audio_to_asr_gateway(self) -> None:
+        class FakeGateway:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def push_audio(self, handle, audio_bytes: bytes) -> None:
+                self.calls.append((handle, audio_bytes))
+
+            def close(self) -> None:
+                pass
+
+        gateway = FakeGateway()
+        service = RealtimeSpeechService(asr_gateway=gateway)
+        handle = AsrSessionHandle(session_id="session-audio")
+        audio_bytes = np.array([0.25, -0.5], dtype=np.float32).tobytes()
+
+        with (
+            patch("src.application.live_classroom.realtime_speech_service.session_manager.mark_running"),
+            patch("src.application.live_classroom.realtime_speech_service.session_manager.next_event_seq", return_value=7),
+        ):
+            last_metrics_at, metrics_payload = self._run_async(
+                service.process_audio_message(
+                    session_id="session-audio",
+                    audio_bytes=audio_bytes,
+                    pipeline=handle,
+                    last_metrics_at=0.0,
+                )
+            )
+
+        self.assertGreater(last_metrics_at, 0.0)
+        self.assertIsNotNone(metrics_payload)
+        self.assertEqual(metrics_payload["type"], "audio_metrics")
+        self.assertEqual(gateway.calls, [(handle, audio_bytes)])
+
+    def test_get_asr_status_delegates_to_gateway(self) -> None:
+        class FakeGateway:
+            def status(self) -> dict[str, object]:
+                return {"backend": "fake", "healthy": True}
+
+            def close(self) -> None:
+                pass
+
+        service = RealtimeSpeechService(asr_gateway=FakeGateway())
+
+        payload = self._run_async(service.get_asr_status())
+
+        self.assertEqual(payload["backend"], "fake")
+        self.assertTrue(payload["healthy"])
+
     def test_handle_final_transcript_delegates_to_knowledge_ingestion(self) -> None:
         service = RealtimeSpeechService()
         sender = FakeSender()
