@@ -1,6 +1,8 @@
 import unittest
 from types import SimpleNamespace
 
+from llama_index.core.llms import ChatMessage, MessageRole
+
 from src.application.lesson_copilot import (
     CopilotContext,
     Executor,
@@ -37,6 +39,40 @@ class FakeLLM:
         return SimpleNamespace(text=self.responses.pop(0))
 
 
+class FakeToolCallingLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.tool_names = []
+
+    def chat_with_tools(self, tools, chat_history, allow_parallel_tool_calls=False):
+        self.calls += 1
+        self.tool_names = [tool.metadata.name for tool in tools]
+        if self.calls == 1:
+            return SimpleNamespace(
+                message=ChatMessage(role=MessageRole.ASSISTANT, content=""),
+                tool_calls=[
+                    SimpleNamespace(
+                        tool_id="call-1",
+                        tool_name="get_lesson_note",
+                        tool_kwargs={},
+                    )
+                ],
+            )
+        return SimpleNamespace(
+            message=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="This lesson already has a note: Existing lesson note.",
+            ),
+            tool_calls=[],
+        )
+
+    def get_tool_calls_from_response(self, response, error_on_no_tool_call=True):
+        return response.tool_calls
+
+    def complete(self, prompt: str):
+        raise AssertionError("prompt JSON fallback should not be used")
+
+
 class LessonCopilotAgentTests(unittest.TestCase):
     def test_package_import_and_build_tools(self) -> None:
         registry = build_tools(FakeLessonNoteService(), "web-course", "lesson-1")
@@ -46,6 +82,29 @@ class LessonCopilotAgentTests(unittest.TestCase):
         self.assertEqual(registry.get("generate_lesson_note").name, "generate_lesson_note")
         self.assertEqual(registry.get("get_lesson_transcripts").name, "get_lesson_transcripts")
         self.assertEqual(registry.get("query_lesson_knowledge").name, "query_lesson_knowledge")
+
+    def test_agent_uses_native_tool_calling_when_available(self) -> None:
+        note_service = FakeLessonNoteService()
+        note_service.note = {
+            "course_id": "web-course",
+            "lesson_id": "lesson-1",
+            "summary": "Existing lesson note.",
+            "status": "done",
+        }
+        registry = build_tools(note_service, "web-course", "lesson-1")
+        llm = FakeToolCallingLLM()
+        agent = LessonCopilotAgent(llm, Executor(registry))
+
+        result = agent.run(
+            CopilotContext(course_id="web-course", lesson_id="lesson-1"),
+            "Help me review this lesson.",
+        )
+
+        self.assertEqual(result.answer, "This lesson already has a note: Existing lesson note.")
+        self.assertEqual(result.metadata["tool_protocol"], "native")
+        self.assertIn("get_lesson_note", llm.tool_names)
+        self.assertEqual(result.steps[0].tool_name, "get_lesson_note")
+        self.assertTrue(result.steps[0].tool_ok)
 
     def test_agent_generates_note_via_registry(self) -> None:
         registry = build_tools(FakeLessonNoteService(), "web-course", "lesson-1")

@@ -24,10 +24,16 @@ class _RealtimeSpeechPipelineBase:
 
         self._cb_in_speech = False
 
-        self.chunk_size = [0, 10, 5]
+        self.chunk_size = [0, 20, 10]
         self.asr_stride = self.chunk_size[1] * 960
-        self.tail_keep = int(0.35 * self.asr_stride)
+        self.tail_keep = int(0.4 * self.asr_stride)
         self.partial_log_interval = 0.25
+        logger.info(
+            "Realtime ASR window configured: chunk_size=%s stride=%.2fs tail=%.2fs",
+            self.chunk_size,
+            self.asr_stride / 16000,
+            self.tail_keep / 16000,
+        )
 
         self.on_partial = on_partial
         self.on_final = on_final

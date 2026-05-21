@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
+import subprocess
+import time
 from typing import Any, Mapping, Sequence
 
 import requests
@@ -134,14 +137,27 @@ class MineruClient:
         ]
 
     def download_result_zip(self, full_zip_url: str, target_path: Path) -> None:
-        response = self.session.get(full_zip_url, stream=True, timeout=self.download_timeout)
-        if response.status_code != 200:
-            raise MineruApiError(f"MinerU result download failed: HTTP {response.status_code}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        with target_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self.session.get(full_zip_url, stream=True, timeout=self.download_timeout)
+                if response.status_code != 200:
+                    raise MineruApiError(f"MinerU result download failed: HTTP {response.status_code}")
+                with target_path.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+                return
+            except Exception as exc:
+                last_error = exc
+                if target_path.exists():
+                    target_path.unlink()
+                if attempt < 3:
+                    time.sleep(attempt * 2)
+        if _download_with_curl(full_zip_url, target_path, timeout_seconds=max(60, int(self.download_timeout))):
+            return
+        raise MineruApiError(f"MinerU result download failed after retries: {last_error}") from last_error
 
     def _request_json(self, method: str, path: str, *, json_payload: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.token:
@@ -187,3 +203,31 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _download_with_curl(url: str, target_path: Path, *, timeout_seconds: int) -> bool:
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if not curl:
+        return False
+    command = [
+        curl,
+        "-L",
+        "--fail",
+        "--ssl-no-revoke",
+        "--connect-timeout",
+        "30",
+        "--max-time",
+        str(timeout_seconds),
+        "-o",
+        str(target_path),
+        url,
+    ]
+    try:
+        completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    except Exception:
+        return False
+    if completed.returncode == 0 and target_path.exists() and target_path.stat().st_size > 0:
+        return True
+    if target_path.exists():
+        target_path.unlink()
+    return False

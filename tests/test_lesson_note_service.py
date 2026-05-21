@@ -70,6 +70,22 @@ class LessonNoteServiceTests(unittest.TestCase):
             self.assertFalse(cached_plan.should_generate)
             self.assertEqual(cached_plan.note.note_id, note.note_id)
 
+    def test_delete_latest_note_removes_note(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, transcript_service, repository, _llm = self._build_service(
+                temp_dir,
+                responses=["# Note\n\nBody."],
+            )
+            self._append_transcripts(transcript_service)
+            note = service.generate_note(course_id="web-course", lesson_id="lesson-1")
+
+            deleted = service.delete_latest_note(course_id="web-course", lesson_id="lesson-1")
+
+            self.assertIsNotNone(deleted)
+            self.assertEqual(deleted.note_id, note.note_id)
+            self.assertIsNone(repository.get_note(note.note_id))
+            self.assertIsNone(repository.get_latest_note(course_id="web-course", lesson_id="lesson-1"))
+
     def test_generate_note_uses_single_pass_even_when_context_is_long(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service, transcript_service, _repository, llm = self._build_service(

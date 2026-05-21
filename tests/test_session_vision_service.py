@@ -91,9 +91,11 @@ class SessionVisionServiceTests(unittest.TestCase):
         writer = FakeTranscriptWriter()
         indexer = FakeRagIndexer()
         refine_calls = []
+        ocr_extractor = FakeExtractor("OCR classroom text")
+        vlm_extractor = FakeExtractor("blackboard formula y = kx + b")
         service = SessionVisionService(
-            ocr_extractor=FakeExtractor("PPT title\nknowledge point"),
-            vlm_extractor=FakeExtractor("blackboard formula y = kx + b"),
+            ocr_extractor=ocr_extractor,
+            vlm_extractor=vlm_extractor,
             transcript_writer=writer,
             rag_indexer=indexer,
             refine_scheduler=lambda session_id: refine_calls.append(session_id),
@@ -117,9 +119,11 @@ class SessionVisionServiceTests(unittest.TestCase):
         self.assertEqual(writer.records[0]["metadata"]["region"], "ppt")
         self.assertEqual(writer.records[0]["created_at"], 5)
         self.assertEqual(writer.records[0]["metadata"]["frame_captured_at_ms"], 5000)
-        self.assertIn("PPT title", writer.records[0]["clean_text"])
+        self.assertIn("OCR classroom text", writer.records[0]["clean_text"])
         self.assertEqual(writer.records[1]["metadata"]["region"], "blackboard")
-        self.assertIn("blackboard formula", writer.records[1]["clean_text"])
+        self.assertIn("OCR classroom text", writer.records[1]["clean_text"])
+        self.assertEqual(len(ocr_extractor.calls), 2)
+        self.assertEqual(vlm_extractor.calls, [])
         self.assertEqual(len(indexer.records), 2)
         self.assertEqual(refine_calls, ["session-vision"])
 

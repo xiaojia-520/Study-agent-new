@@ -48,7 +48,7 @@ function buildSessionConfigSignature(subject: string, model: ModelKey): string {
 export const useSessionStore = defineStore('session', () => {
   const backendBaseUrl = ref(defaultBackendBaseUrl)
   const subject = ref('Web 开发课堂')
-  const model = ref<ModelKey>('paraformer-zh-streaming')
+  const model = ref<ModelKey>('paraformer-zh-streaming-2pass')
   const modelOptions = ref<ModelOption[]>([...sessionModelOptions])
   const microphone = ref('default')
   const microphones = ref<MicrophoneOption[]>([{ id: 'default', label: '默认麦克风' }])
@@ -329,6 +329,7 @@ export const useSessionStore = defineStore('session', () => {
     ensureSession,
     fetchCameras,
     fetchMicrophones,
+    hydrateTranscriptsFromServer,
     refreshLessonAssets,
     initializing,
     loadingCameras,

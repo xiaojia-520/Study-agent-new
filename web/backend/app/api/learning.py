@@ -5,6 +5,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.application.container import ApplicationServices
+from src.infrastructure.storage.qdrant_index_store import QdrantLocalStorageLockedError
 from web.backend.app.dependencies import get_backend_services
 from web.backend.app.execution import run_blocking
 from web.backend.app.presenters import (
@@ -34,6 +35,7 @@ async def query_session(
             include_rag_context=payload.include_rag_context,
             classroom_context_mode=payload.classroom_context_mode,
             asset_ids=payload.asset_ids,
+            live_transcript=payload.live_transcript,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"session not found: {session_id}") from exc
@@ -41,6 +43,8 @@ async def query_session(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except QdrantLocalStorageLockedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     classifier = services.session_rag_query.classify_source_kind
     metadata = dict(answer.metadata)

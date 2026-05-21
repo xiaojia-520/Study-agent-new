@@ -19,6 +19,10 @@ class QdrantIndexStoreConfig:
     timeout: int = settings.RAG_QDRANT_TIMEOUT
 
 
+class QdrantLocalStorageLockedError(RuntimeError):
+    """Raised when embedded Qdrant local storage is already opened elsewhere."""
+
+
 class QdrantIndexStore:
     def __init__(
         self,
@@ -34,10 +38,19 @@ class QdrantIndexStore:
             qdrant_client_cls, _, _ = self._load_qdrant_modules()
             if self.config.prefer_local:
                 self.config.local_path.mkdir(parents=True, exist_ok=True)
-                self._client = qdrant_client_cls(
-                    path=str(self.config.local_path),
-                    check_compatibility=False,
-                )
+                try:
+                    self._client = qdrant_client_cls(
+                        path=str(self.config.local_path),
+                        check_compatibility=False,
+                    )
+                except Exception as exc:
+                    if self._is_local_lock_error(exc):
+                        raise QdrantLocalStorageLockedError(
+                            "local Qdrant storage is locked by another process: "
+                            f"{self.config.local_path}. Stop the other backend/script process, "
+                            "or set RAG_QDRANT_PREFER_LOCAL=false and use a Qdrant server."
+                        ) from exc
+                    raise
             else:
                 self._client = qdrant_client_cls(
                     url=self.config.url,
@@ -228,6 +241,23 @@ class QdrantIndexStore:
                 "qdrant-client is required for QdrantIndexStore. Install qdrant-client."
             ) from exc
         return QdrantClient, Distance, VectorParams
+
+    @staticmethod
+    def _is_local_lock_error(exc: Exception) -> bool:
+        current: BaseException | None = exc
+        while current is not None:
+            class_name = current.__class__.__name__
+            module_name = current.__class__.__module__
+            message = str(current).lower()
+            if (
+                class_name == "AlreadyLocked"
+                or "portalocker" in module_name
+                or "alreadylocked" in message
+                or "permission denied" in message
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     @staticmethod
     def _load_llamaindex_modules() -> tuple[type[Any], type[Any], Any, type[Any]]:

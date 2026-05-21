@@ -404,6 +404,7 @@ export interface QuerySessionPayload {
   include_rag_context: boolean
   classroom_context_mode?: ClassroomContextMode
   asset_ids?: string[]
+  live_transcript?: string
 }
 
 export interface RetrievalResult {

@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 
 import { useRagChatStore } from '../stores/ragChat'
 import { useSessionStore } from '../stores/session'
+import RichMarkdown from './RichMarkdown.vue'
 
 const ragChatStore = useRagChatStore()
 const sessionStore = useSessionStore()
@@ -161,7 +162,12 @@ watch(
             <span>{{ formatTimestamp(item.createdAt) }}</span>
           </div>
 
-          <p class="mt-2 whitespace-pre-line text-sm leading-6">
+          <RichMarkdown
+            v-if="item.role === 'assistant'"
+            class="mt-2 text-sm leading-6"
+            :text="item.text"
+          />
+          <p v-else class="mt-2 whitespace-pre-line text-sm leading-6">
             {{ item.text }}
           </p>
 

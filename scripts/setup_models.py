@@ -25,7 +25,7 @@ def main() -> int:
         "yolo_dir": root / "models" / "yolo",
         "ocr_det": root / "models" / "ocr" / "PP-OCRv5_mobile_det",
         "ocr_rec": root / "models" / "ocr" / "PP-OCRv5_mobile_rec",
-        "qwen_vl": root / "models" / "vlm" / "Qwen2.5-VL-7B-Instruct",
+        "qwen_vl": root / "models" / "vlm" / "Qwen2.5-VL-3B-Instruct-AWQ",
     }
     yolo11_weight_path = targets["yolo_dir"] / "yolo11s.pt"
 
@@ -104,7 +104,7 @@ def main() -> int:
         print("  - skip:", targets["qwen_vl"])
     else:
         snapshot_download(
-            repo_id="Qwen/Qwen2.5-VL-7B-Instruct",
+            repo_id="Qwen/Qwen2.5-VL-3B-Instruct-AWQ",
             local_dir=str(targets["qwen_vl"]),
             local_dir_use_symlinks=False,
         )

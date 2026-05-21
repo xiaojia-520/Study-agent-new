@@ -30,6 +30,7 @@ env/
 ENV/
 
 .pytest_cache/
+.pip-cache/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/
@@ -87,6 +88,7 @@ tmp_qdrant_test/
 tmp_qdrant_eval*/
 tmp_qdrant_eval_llm/
 uploads/
+img.png
 
 ############################
 # Environment / secrets

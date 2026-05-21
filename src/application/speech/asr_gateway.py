@@ -624,6 +624,44 @@ def parse_remote_worker_endpoints(raw_value: str) -> list[RemoteWorkerEndpoint]:
     return endpoints
 
 
+def _warmup_asr_worker_models() -> dict[str, object]:
+    model_key = "paraformer-zh-streaming-2pass"
+    started_at = time.monotonic()
+    status: dict[str, object] = {
+        "enabled": True,
+        "model_key": model_key,
+        "offline_model": bool(settings.ASR_WARMUP_OFFLINE_MODEL),
+        "ok": False,
+    }
+    try:
+        from src.core.asr.realtime_models import resolve_realtime_asr_model
+        from src.infrastructure.model_hub import model_hub
+
+        warmup_model = resolve_realtime_asr_model(model_key)
+        logger.info("ASR worker warmup: loading %s from %s", warmup_model.key, warmup_model.resolved_model_name)
+        model_hub.load_asr_model(model_name=warmup_model.resolved_model_name)
+        if settings.ASR_WARMUP_OFFLINE_MODEL:
+            logger.info("ASR worker warmup: loading offline second-pass model")
+            model_hub.load_funasr_model()
+        status.update(
+            {
+                "ok": True,
+                "resolved_model_name": warmup_model.resolved_model_name,
+                "seconds": round(time.monotonic() - started_at, 3),
+            }
+        )
+        logger.info("ASR worker warmup complete in %.3fs", status["seconds"])
+    except Exception as exc:
+        status.update(
+            {
+                "error": str(exc),
+                "seconds": round(time.monotonic() - started_at, 3),
+            }
+        )
+        logger.exception("ASR worker warmup failed")
+    return status
+
+
 def run_queue_worker(command_q, event_q) -> None:
     serve_asr_commands(
         command_reader=command_q.get,
@@ -665,9 +703,11 @@ def serve_asr_commands(
     *,
     command_reader: Callable[[], object],
     emit: Callable[[dict[str, object]], None],
+    warmup_on_start: bool = True,
 ) -> None:
     pipelines: dict[str, Any] = {}
     started_at = time.monotonic()
+    warmup_status = _warmup_asr_worker_models() if warmup_on_start else {"enabled": False}
 
     def publish(
         event_type: AsrEventType,
@@ -718,6 +758,7 @@ def serve_asr_commands(
                         "active_session_count": len(pipelines),
                         "active_sessions": sorted(pipelines.keys()),
                         "uptime_seconds": round(time.monotonic() - started_at, 3),
+                        "warmup": warmup_status,
                     },
                 )
                 continue

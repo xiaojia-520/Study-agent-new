@@ -158,6 +158,19 @@ class LessonNoteSqlRepository:
         )
         return _row_to_note(rows[0]) if rows else None
 
+    def delete_note(self, note_id: str) -> bool:
+        existing = self.get_note(note_id)
+        if existing is None:
+            return False
+        self.store.execute(
+            """
+            DELETE FROM lesson_notes
+            WHERE note_id = ?
+            """,
+            (note_id,),
+        )
+        return True
+
 
 SQLiteLessonNoteRepository = LessonNoteSqlRepository
 

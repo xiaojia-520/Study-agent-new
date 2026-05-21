@@ -41,6 +41,8 @@ class LessonNoteRepository(Protocol):
 
     def get_latest_note(self, *, course_id: str, lesson_id: str) -> LessonNote | None: ...
 
+    def delete_note(self, note_id: str) -> bool: ...
+
 
 class LessonTranscriptLoader(Protocol):
     def __call__(
@@ -172,6 +174,20 @@ class LessonNoteService:
             course_id=_required_text(course_id, "course_id"),
             lesson_id=_required_text(lesson_id, "lesson_id"),
         )
+
+    def delete_note(self, note_id: str) -> LessonNote | None:
+        note = self.repository.get_note(_required_text(note_id, "note_id"))
+        if note is None:
+            return None
+        self.repository.delete_note(note.note_id)
+        return note
+
+    def delete_latest_note(self, *, course_id: str, lesson_id: str) -> LessonNote | None:
+        latest = self.get_latest_note(course_id=course_id, lesson_id=lesson_id)
+        if latest is None:
+            return None
+        self.repository.delete_note(latest.note_id)
+        return latest
 
     def close(self) -> None:
         if callable(self.runtime_closer):

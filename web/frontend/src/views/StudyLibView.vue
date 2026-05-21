@@ -10,6 +10,7 @@ import {
   runLessonCopilotStream,
 } from '../api/studyAgent'
 import SideBar from '../components/history/SideBar.vue'
+import RichMarkdown from '../components/RichMarkdown.vue'
 import { useSessionStore } from '../stores/session'
 import type {
   LessonCopilotStepItem,
@@ -82,7 +83,7 @@ const copilotTimeline = computed<LessonCopilotTimelineItem[]>(() => {
   }
 
   copilotSteps.value.forEach((step, index) => {
-    const thought = step.thought?.trim()
+    const thought = step.thought?.trim() || fallbackCopilotThought(step)
     if (thought) {
       items.push({
         kind: 'thought',
@@ -485,6 +486,28 @@ function formatCopilotStepLabel(step: LessonCopilotStepItem): string {
   return step.action || 'step'
 }
 
+function fallbackCopilotThought(step: LessonCopilotStepItem): string {
+  if (step.action !== 'tool') {
+    return ''
+  }
+  const toolName = step.tool_name || ''
+  const descriptions: Record<string, string> = {
+    get_lesson_note: 'Checking whether an existing lesson note already answers the request.',
+    generate_lesson_note: 'Generating or refreshing the lesson note because existing notes are not enough.',
+    delete_lesson_note: 'Deleting the lesson note because the user explicitly requested removal.',
+    get_lesson_transcripts: 'Reading raw lesson transcripts for additional classroom context.',
+    get_refined_lesson_transcripts: 'Reading refined transcripts to get cleaner classroom context.',
+    get_lesson_videos: 'Checking processed classroom videos for relevant replay or subtitle context.',
+    get_session_assets: 'Checking assets uploaded in the current session.',
+    search_available_assets: 'Searching indexed uploaded materials to find a relevant document source.',
+    get_lesson_messages: 'Checking recent lesson chat messages for conversation context.',
+    generate_lesson_quiz: 'Generating quiz questions because the user asked for practice or self-check items.',
+    generate_lesson_summary: 'Generating a structured lesson summary from the current session context.',
+    query_lesson_knowledge: 'Retrieving relevant knowledge from the lesson or selected materials before answering.',
+  }
+  return descriptions[toolName] || (toolName ? `Calling ${toolName} to gather information for the answer.` : '')
+}
+
 function formatToolStatus(step: LessonCopilotStepItem): string {
   if (step.tool_ok === true) {
     return 'success'
@@ -749,8 +772,13 @@ onBeforeUnmount(() => {
                         </span>
                       </div>
 
+                      <RichMarkdown
+                        v-if="item.text && item.kind !== 'user' && item.kind !== 'error'"
+                        class="mt-2 text-sm leading-7 text-[rgb(var(--text-main))]"
+                        :text="item.text"
+                      />
                       <p
-                        v-if="item.text"
+                        v-else-if="item.text"
                         class="mt-2 whitespace-pre-wrap text-sm leading-7"
                         :class="item.kind === 'error' ? 'text-[rgb(var(--danger))]' : 'text-[rgb(var(--text-main))]'"
                       >
@@ -828,7 +856,7 @@ onBeforeUnmount(() => {
                 {{ note.error_message || '课后笔记生成失败。' }}
               </div>
 
-              <div v-else class="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+              <div v-else class="grid gap-4">
                 <article class="min-w-0 rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))] p-5">
                   <p class="text-xs font-semibold uppercase tracking-[0.18em] text-[rgb(var(--text-faint))]">
                     Generated Note
@@ -917,7 +945,7 @@ onBeforeUnmount(() => {
 
                   <section class="rounded-[var(--radius-soft)] bg-[rgb(var(--bg-base))] p-4">
                     <h4 class="text-sm font-semibold text-[rgb(var(--text-main))]">Markdown</h4>
-                    <pre class="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-3 text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ note.markdown }}</pre>
+                    <pre class="mt-3 whitespace-pre-wrap break-words rounded-[var(--radius-soft)] bg-[rgb(var(--bg-elevated))] p-3 text-xs leading-5 text-[rgb(var(--text-subtle))]">{{ note.markdown }}</pre>
                   </section>
                 </aside>
               </div>

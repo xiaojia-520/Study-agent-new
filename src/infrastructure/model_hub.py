@@ -1,6 +1,3 @@
-from funasr import AutoModel
-from sentence_transformers import SentenceTransformer
-from silero_vad import load_silero_vad
 import threading
 
 from config.settings import settings
@@ -32,6 +29,8 @@ class ModelHub:
         with self._asr_lock:
             model = self._asr_models.get(resolved_model_name)
             if model is None:
+                from funasr import AutoModel
+
                 logger.info(f"Loading ASR model: {resolved_model_name} on device={resolved_device}")
                 model = AutoModel(
                     model=resolved_model_name,
@@ -52,6 +51,8 @@ class ModelHub:
 
     def load_embed_model(self):
         if self._embed_model is None:
+            from sentence_transformers import SentenceTransformer
+
             resolved_device = resolve_device(settings.EMBED_DEVICE)
             logger.info(f"Loading embed model: {settings.EMBED_MODEL_NAME} on device={resolved_device}")
             self._embed_model = SentenceTransformer(settings.EMBED_MODEL_NAME, device=resolved_device)
@@ -60,6 +61,8 @@ class ModelHub:
 
     def load_vad_model(self):
         if self._vad_model is None:
+            from silero_vad import load_silero_vad
+
             logger.info("Loading VAD model: silero_vad")
             self._vad_model = load_silero_vad()
             logger.info("VAD model loaded")
@@ -67,6 +70,8 @@ class ModelHub:
 
     def load_funasr_model(self):
         if self.funasr_model is None:
+            from funasr import AutoModel
+
             resolved_device = resolve_device(settings.ASR_DEVICE)
             logger.info(f"Loading FunASR offline model with punc/vad on device={resolved_device}")
             self.funasr_model = AutoModel(
