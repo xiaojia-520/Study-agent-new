@@ -2,7 +2,10 @@ from src.application.speech.asr_gateway import (
     AsrSessionCallbacks,
     AsrSessionHandle,
     RemoteAsrPoolGateway,
+    RemoteAsrGateway,
     RemoteWorkerEndpoint,
+    _address_label,
+    _socket_address,
     parse_remote_worker_endpoints,
     serve_asr_commands,
 )
@@ -36,6 +39,21 @@ def test_parse_remote_worker_endpoints() -> None:
         RemoteWorkerEndpoint("127.0.0.1", 8765),
         RemoteWorkerEndpoint("127.0.0.1", 8766),
     ]
+
+
+def test_parse_remote_worker_endpoints_supports_ipv6() -> None:
+    endpoints = parse_remote_worker_endpoints("[2409:8a00:2452:390:9505:5687:781f:506f]:8765")
+
+    assert endpoints == [
+        RemoteWorkerEndpoint("2409:8a00:2452:390:9505:5687:781f:506f", 8765),
+    ]
+
+
+def test_socket_address_formats_ipv6_for_multiprocessing_connection() -> None:
+    address = _socket_address("2409:8a00:2452:390:9505:5687:781f:506f", 8765)
+
+    assert address == ("2409:8a00:2452:390:9505:5687:781f:506f", 8765, 0, 0)
+    assert _address_label(address) == "[2409:8a00:2452:390:9505:5687:781f:506f]:8765"
 
 
 def test_remote_pool_routes_sessions_with_affinity() -> None:
@@ -98,3 +116,10 @@ def test_remote_pool_routes_sessions_with_affinity() -> None:
     assert status["backend"] == "remote_pool"
     assert status["worker_count"] == 2
     assert status["active_session_count"] == 2
+
+
+def test_remote_gateway_uses_ipv6_socket_address() -> None:
+    gateway = RemoteAsrGateway.__new__(RemoteAsrGateway)
+    gateway.address = _socket_address("2409:8a00:2452:390:9505:5687:781f:506f", 8765)
+
+    assert gateway.address == ("2409:8a00:2452:390:9505:5687:781f:506f", 8765, 0, 0)

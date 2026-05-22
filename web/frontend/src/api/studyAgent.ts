@@ -23,6 +23,7 @@ import type {
 } from '../types/study'
 
 function resolveDefaultBackendBaseUrl(): string {
+  const backendIpv6Host = '240a:4283:802:aa7:9e80:afdb:e24b:d94'
   const configuredBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim()
   if (configuredBaseUrl) {
     return configuredBaseUrl
@@ -30,7 +31,7 @@ function resolveDefaultBackendBaseUrl(): string {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin
   }
-  return 'http://127.0.0.1:8000'
+  return `http://[${backendIpv6Host}]:8000`
 }
 
 export const defaultBackendBaseUrl = resolveDefaultBackendBaseUrl()

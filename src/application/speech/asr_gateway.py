@@ -3,10 +3,11 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import queue
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from multiprocessing.connection import Client, Listener
+from multiprocessing.connection import Client, Connection, Listener, answer_challenge, deliver_challenge
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
 
 from config.settings import settings
@@ -60,6 +61,46 @@ class AsrSessionHandle:
 class RemoteWorkerEndpoint:
     host: str
     port: int
+
+
+def _socket_address(host: str, port: int) -> tuple[object, ...]:
+    normalized_host = str(host).strip()
+    normalized_port = int(port)
+    if ":" in normalized_host and not normalized_host.startswith("\\\\"):
+        return (normalized_host, normalized_port, 0, 0)
+    return (normalized_host, normalized_port)
+
+
+def _address_label(address: tuple[object, ...]) -> str:
+    host = str(address[0])
+    port = int(address[1])
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"
+
+
+def _is_ipv6_address(address: tuple[object, ...]) -> bool:
+    return len(address) == 4
+
+
+def _listener_family(address: tuple[object, ...]) -> str | None:
+    if _is_ipv6_address(address):
+        return "AF_INET6"
+    return None
+
+
+def _open_client_connection(address: tuple[object, ...], authkey: bytes | None) -> Connection:
+    if not _is_ipv6_address(address):
+        return Client(address, authkey=authkey)
+
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
+        sock.setblocking(True)
+        sock.connect(address)
+        connection = Connection(sock.detach())
+    if authkey is not None:
+        answer_challenge(connection, authkey)
+        deliver_challenge(connection, authkey)
+    return connection
 
 
 class AsrGateway(Protocol):
@@ -294,7 +335,7 @@ class RemoteAsrGateway:
         connect_timeout_seconds: float = settings.ASR_WORKER_CONNECT_TIMEOUT_SECONDS,
         close_timeout_seconds: float = settings.ASR_WORKER_CLOSE_TIMEOUT_SECONDS,
     ) -> None:
-        self.address = (host, int(port))
+        self.address = _socket_address(host, port)
         self.authkey = str(auth_token).encode("utf-8")
         self.connect_timeout_seconds = max(0.1, float(connect_timeout_seconds))
         self.close_timeout_seconds = max(0.1, float(close_timeout_seconds))
@@ -361,18 +402,18 @@ class RemoteAsrGateway:
                     "backend": "remote",
                     "healthy": False,
                     "error": "ASR worker status request timed out",
-                    "address": f"{self.address[0]}:{self.address[1]}",
+                    "address": _address_label(self.address),
                 }
             payload["backend"] = "remote"
             payload["healthy"] = True
-            payload["address"] = f"{self.address[0]}:{self.address[1]}"
+            payload["address"] = _address_label(self.address)
             return payload
         except Exception as exc:
             return {
                 "backend": "remote",
                 "healthy": False,
                 "error": str(exc),
-                "address": f"{self.address[0]}:{self.address[1]}",
+                "address": _address_label(self.address),
             }
         finally:
             with self._lock:
@@ -395,13 +436,13 @@ class RemoteAsrGateway:
         last_error: Exception | None = None
         while time.monotonic() < deadline:
             try:
-                self._connection = Client(self.address, authkey=self.authkey)
-                logger.info("Connected to remote ASR worker at %s:%s", self.address[0], self.address[1])
+                self._connection = _open_client_connection(self.address, self.authkey)
+                logger.info("Connected to remote ASR worker at %s", _address_label(self.address))
                 return
             except OSError as exc:
                 last_error = exc
                 time.sleep(0.2)
-        message = f"failed to connect to ASR worker at {self.address[0]}:{self.address[1]}"
+        message = f"failed to connect to ASR worker at {_address_label(self.address)}"
         raise RuntimeError(message) from last_error
 
     def _send(self, payload: dict[str, object]) -> None:
@@ -613,9 +654,14 @@ def parse_remote_worker_endpoints(raw_value: str) -> list[RemoteWorkerEndpoint]:
         item = raw_item.strip()
         if not item:
             continue
-        host, separator, port_text = item.rpartition(":")
-        if not separator or not host.strip() or not port_text.strip():
-            raise ValueError(f"invalid ASR worker endpoint: {item!r}; expected host:port")
+        if item.startswith("["):
+            host, separator, port_text = item[1:].partition("]:")
+            if not separator or not host.strip() or not port_text.strip():
+                raise ValueError(f"invalid ASR worker endpoint: {item!r}; expected [host]:port")
+        else:
+            host, separator, port_text = item.rpartition(":")
+            if not separator or not host.strip() or not port_text.strip():
+                raise ValueError(f"invalid ASR worker endpoint: {item!r}; expected host:port")
         try:
             port = int(port_text)
         except ValueError as exc:
@@ -637,10 +683,10 @@ def run_remote_worker_server(
     port: int = settings.ASR_WORKER_PORT,
     auth_token: str = settings.ASR_WORKER_AUTH_TOKEN,
 ) -> None:
-    address = (host, int(port))
+    address = _socket_address(host, port)
     authkey = str(auth_token).encode("utf-8")
-    listener = Listener(address, authkey=authkey)
-    logger.info("ASR worker listening on %s:%s pid=%s", host, port, os.getpid())
+    listener = Listener(address, family=_listener_family(address), authkey=authkey)
+    logger.info("ASR worker listening on %s pid=%s", _address_label(address), os.getpid())
     try:
         while True:
             connection = listener.accept()
