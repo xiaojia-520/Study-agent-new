@@ -95,6 +95,7 @@ export const useRagChatStore = defineStore('ragChat', () => {
         with_llm: true,
         include_rag_context: includeRagContext.value,
         asset_ids: selectedAssetIds.value,
+        live_transcript: sessionStore.partialTranscript.trim() || undefined,
       },
       sessionStore.backendBaseUrl,
     )

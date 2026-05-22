@@ -61,7 +61,7 @@ class SessionVisionService:
         refine_scheduler=None,
     ) -> None:
         self.ocr_extractor = ocr_extractor or LocalPaddleOcrExtractor()
-        self.vlm_extractor = vlm_extractor or LocalQwenVlExtractor()
+        self.vlm_extractor = vlm_extractor
         self.ingestion_service = ingestion_service or KnowledgeIngestionService(
             transcript_writer=transcript_writer,
             realtime_indexer=rag_indexer,
@@ -119,8 +119,7 @@ class SessionVisionService:
                 try:
                     region = _parse_region(regions[region_name])
                     crop = _crop_region(image, region)
-                    extractor = self.ocr_extractor if region_name == "ppt" else self.vlm_extractor
-                    text = _normalize_text(extractor.extract_text(crop))
+                    text = _normalize_text(self.ocr_extractor.extract_text(crop))
                     result.text = text
                     if not text:
                         result.status = "empty"
@@ -396,17 +395,40 @@ class LocalQwenVlExtractor:
                 raise FileNotFoundError(f"VLM model path does not exist: {settings.VLM_MODEL_NAME}")
 
             try:
+                import torch
                 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
             except ImportError as exc:
                 raise ImportError("transformers with Qwen2.5-VL support is required") from exc
 
+            torch_dtype = self._resolve_torch_dtype(torch)
+            device_map = self._resolve_device_map(torch)
             self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 str(settings.VLM_MODEL_NAME),
-                torch_dtype="auto",
-                device_map=settings.VLM_DEVICE_MAP,
+                torch_dtype=torch_dtype,
+                device_map=device_map,
             )
-            self._processor = AutoProcessor.from_pretrained(str(settings.VLM_MODEL_NAME))
+            self._processor = AutoProcessor.from_pretrained(
+                str(settings.VLM_MODEL_NAME),
+                use_fast=True,
+            )
             return self._model, self._processor
+
+    @staticmethod
+    def _resolve_torch_dtype(torch_module):
+        configured = str(settings.VLM_TORCH_DTYPE or "auto").strip().lower()
+        if configured == "auto":
+            return torch_module.float16 if torch_module.cuda.is_available() else "auto"
+        dtype = getattr(torch_module, configured, None)
+        if dtype is None:
+            raise ValueError(f"unsupported VLM_TORCH_DTYPE: {settings.VLM_TORCH_DTYPE}")
+        return dtype
+
+    @staticmethod
+    def _resolve_device_map(torch_module) -> str:
+        configured = str(settings.VLM_DEVICE_MAP or "auto").strip().lower()
+        if configured != "auto":
+            return settings.VLM_DEVICE_MAP
+        return "cuda:0" if torch_module.cuda.is_available() else "auto"
 
 
 def _parse_region(value: Any) -> VisionRegion:

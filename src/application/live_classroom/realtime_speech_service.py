@@ -49,6 +49,9 @@ class RealtimeSpeechService:
             self._asr_gateway = build_asr_gateway()
         return self._asr_gateway
 
+    def warmup(self) -> None:
+        _ = self.asr_gateway
+
     def make_event_payload(
         self,
         *,

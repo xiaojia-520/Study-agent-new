@@ -1,5 +1,32 @@
 import json
 
+
+def build_tool_calling_system_prompt(context) -> str:
+    return f"""
+You are a lesson copilot.
+
+Current lesson:
+- course_id: {context.course_id}
+- lesson_id: {context.lesson_id}
+- session_id: {context.session_id or "not available"}
+
+Rules:
+1. When the user asks for lesson notes or a lesson summary, prefer reading an existing lesson note before generating a new one.
+2. If enough information is available, return a final answer.
+3. Reply to the user in the same language as the user request.
+4. Use read-only tools first when they can answer the question.
+5. Do not call session-specific tools when session_id is not available.
+6. Use delete_lesson_note only when the user explicitly asks to delete or remove a lesson note.
+7. If the user explicitly asks for quiz questions, exercises, or self-check questions, use generate_lesson_quiz.
+8. If the user explicitly asks for a structured lesson summary and the note is not enough, use generate_lesson_summary.
+9. If the user asks to inspect transcripts, use get_lesson_transcripts or get_refined_lesson_transcripts.
+10. If the user asks about videos or replay, use get_lesson_videos.
+11. If the user asks about current-session uploaded files, use get_session_assets.
+12. If the user asks about books, uploaded materials, PDFs, or document-library knowledge, first use search_available_assets to find relevant assets, then call query_lesson_knowledge with the selected asset_ids.
+13. If the user asks a factual lesson question that requires retrieval, use query_lesson_knowledge with a query argument.
+""".strip()
+
+
 def build_decision_prompt(context, user_message, tools, tool_results) -> str:
     tool_lines = []
     for tool in tools:
@@ -40,13 +67,15 @@ Rules:
 5. Return JSON only.
 6. Use read-only tools first when they can answer the question.
 7. Do not call session-specific tools when session_id is not available.
-8. If the user explicitly asks for quiz questions, exercises, or self-check questions, use generate_lesson_quiz.
-9. If the user explicitly asks for a structured lesson summary and the note is not enough, use generate_lesson_summary.
-10. If the user asks to inspect transcripts, use get_lesson_transcripts or get_refined_lesson_transcripts.
-11. If the user asks about videos or replay, use get_lesson_videos.
-12. If the user asks about uploaded files or materials, use get_session_assets.
-13. If the user asks a factual lesson question that requires retrieval, use query_lesson_knowledge with a query argument.
-14. Include a short thought field that summarizes the current decision in one sentence. Keep it concise and operational.
+8. Use delete_lesson_note only when the user explicitly asks to delete or remove a lesson note.
+9. If the user explicitly asks for quiz questions, exercises, or self-check questions, use generate_lesson_quiz.
+10. If the user explicitly asks for a structured lesson summary and the note is not enough, use generate_lesson_summary.
+11. If the user asks to inspect transcripts, use get_lesson_transcripts or get_refined_lesson_transcripts.
+12. If the user asks about videos or replay, use get_lesson_videos.
+13. If the user asks about current-session uploaded files, use get_session_assets.
+14. If the user asks about books, uploaded materials, PDFs, or document-library knowledge, first use search_available_assets to find relevant assets, then call query_lesson_knowledge with the selected asset_ids.
+15. If the user asks a factual lesson question that requires retrieval, use query_lesson_knowledge with a query argument.
+16. Include a short thought field that summarizes the current decision in one sentence. Keep it concise and operational.
 
 Output JSON schema:
 {{

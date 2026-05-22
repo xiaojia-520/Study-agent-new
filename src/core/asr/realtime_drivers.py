@@ -77,6 +77,21 @@ class AudioChunkBuffer:
         return self.pop(self._size)
 
 
+def _append_partial_text(current: str, segment: str) -> str:
+    if not current:
+        return segment
+    if segment.startswith(current):
+        return segment
+    if current.endswith(segment):
+        return current
+
+    max_overlap = min(len(current), len(segment))
+    for size in range(max_overlap, 0, -1):
+        if current.endswith(segment[:size]):
+            return current + segment[size:]
+    return current + segment
+
+
 class RealtimeASRDriver:
     def on_start(self) -> None:
         raise NotImplementedError
@@ -162,14 +177,21 @@ class ParaformerZhStreamingDriver(RealtimeASRDriver):
             if now - self._last_partial_ts < self.partial_log_interval:
                 continue
 
-            logger.info(f"ASR(partial): {partial_text}")
+            emitted_partial_text = self._format_partial_text(partial_text)
+            if not emitted_partial_text:
+                continue
+
+            logger.info(f"ASR(partial): {emitted_partial_text}")
             self._last_partial_text = partial_text
             self._last_partial_ts = now
             if self.on_partial:
                 try:
-                    self.on_partial(partial_text)
+                    self.on_partial(emitted_partial_text)
                 except Exception as exc:
                     logger.error(f"partial callback failed: {exc}")
+
+    def _format_partial_text(self, partial_text: str) -> str:
+        return partial_text
 
     def on_end(self) -> None:
         remaining = self.buf.pop_all()
@@ -206,6 +228,7 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
             on_final=on_final,
         )
         self.full_buf = AudioChunkBuffer()
+        self._partial_accumulated_text = ""
 
     def on_start(self) -> None:
         self.buf.clear()
@@ -213,6 +236,7 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
         self.asr.reset_stream()
         self._last_partial_text = ""
         self._last_partial_ts = 0.0
+        self._partial_accumulated_text = ""
         logger.info("VAD start -> paraformer-zh-streaming-2pass")
 
     def on_chunk(self, chunk: np.ndarray) -> None:
@@ -236,7 +260,15 @@ class ParaformerZhStreaming2PassDriver(ParaformerZhStreamingDriver):
 
         self.buf.clear()
         self.full_buf.clear()
+        self._partial_accumulated_text = ""
         logger.info("VAD end -> paraformer-zh-streaming-2pass elapsed=%.3fs", time.monotonic() - started_at)
+
+    def _format_partial_text(self, partial_text: str) -> str:
+        segment = partial_text.strip()
+        if not segment:
+            return ""
+        self._partial_accumulated_text = _append_partial_text(self._partial_accumulated_text, segment)
+        return self._partial_accumulated_text
 
     def _finish_streaming_pass(self) -> str:
         remaining = self.buf.pop_all()

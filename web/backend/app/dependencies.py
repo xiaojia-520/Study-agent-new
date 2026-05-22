@@ -27,7 +27,8 @@ async def startup_backend_runtime(logger) -> None:
     logger.info("Backend startup: session backend is ready")
 
     if settings.ASR_RUNTIME_BACKEND.strip().lower() in {"process", "worker", "remote", "external", "client"}:
-        logger.info("Backend startup warmup: ASR runs outside the main process; skipping main-process ASR warmup")
+        logger.info("Backend startup warmup: starting ASR worker")
+        services.realtime_speech.warmup()
     else:
         warmup_model = resolve_realtime_asr_model(settings.ASR_DEFAULT_MODEL_KEY)
         logger.info("Backend startup warmup: loading ASR model %s", warmup_model.key)

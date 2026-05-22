@@ -172,6 +172,7 @@ class SessionRagQueryService:
         include_rag_context: bool = False,
         classroom_context_mode: ClassroomContextMode | str = ClassroomContextMode.SESSION,
         asset_ids: list[str] | tuple[str, ...] | None = None,
+        live_transcript: str | None = None,
     ) -> KnowledgeAnswer:
         session = self.session_getter(session_id)
         if session is None:
@@ -196,6 +197,7 @@ class SessionRagQueryService:
 
         clean_query = self._clean_query_text(query_text)
         selected_asset_ids = self._normalize_asset_ids(asset_ids)
+        live_transcript_context = self._normalize_live_transcript(live_transcript)
         conversation_history = self._get_memory_snapshot(session)
         search_query = self._build_memory_augmented_query(clean_query, conversation_history)
         filters = self.build_query_filters(
@@ -221,6 +223,8 @@ class SessionRagQueryService:
         metadata["classroom_context_mode"] = resolved_context_mode.value
         metadata["selected_asset_ids"] = selected_asset_ids
         metadata["selected_asset_count"] = len(selected_asset_ids)
+        metadata["live_transcript_included"] = bool(live_transcript_context)
+        metadata["live_transcript_chars"] = len(live_transcript_context)
         if search_query != clean_query:
             metadata["memory_augmented_query"] = search_query
 
@@ -260,6 +264,10 @@ class SessionRagQueryService:
                 session_id=session_id,
                 context_mode=resolved_context_mode,
             )
+            if live_transcript_context:
+                recent_prompt_context["speech_transcripts"].append(
+                    self._format_live_transcript_prompt_context(live_transcript_context)
+                )
             metadata["recent_transcript_count"] = self._count_recent_prompt_context(recent_prompt_context)
             metadata["recent_speech_transcript_count"] = len(recent_prompt_context["speech_transcripts"])
             metadata["recent_ocr_context_count"] = len(recent_prompt_context["ocr_context"])
@@ -277,6 +285,13 @@ class SessionRagQueryService:
                 context_mode=resolved_context_mode,
                 force_retrieval=bool(selected_asset_ids),
             )
+            if live_transcript_context:
+                recent_classroom_context.append(
+                    self._format_live_transcript_classroom_context(
+                        len(recent_classroom_context) + 1,
+                        live_transcript_context,
+                    )
+                )
             metadata.update(direct_context_metadata)
             metadata["recent_classroom_context_count"] = len(recent_classroom_context)
             metadata["answer_prompt_version"] = "direct-answer-v3"
@@ -433,6 +448,10 @@ class SessionRagQueryService:
             seen.add(text)
             normalized.append(text)
         return normalized
+
+    @staticmethod
+    def _normalize_live_transcript(live_transcript: str | None) -> str:
+        return " ".join(str(live_transcript or "").strip().split())
 
     @staticmethod
     def _normalize_query_text(query_text: str) -> str:
@@ -784,6 +803,16 @@ class SessionRagQueryService:
 
         snippet = SessionRagQueryService._build_snippet(clean_text, limit=220)
         return f"C{index}. [{'; '.join(tags)}] {snippet}"
+
+    @staticmethod
+    def _format_live_transcript_classroom_context(index: int, text: str) -> str:
+        snippet = SessionRagQueryService._build_snippet(text, limit=320)
+        return f"C{index}. [type=realtime; subject=-; status=partial] {snippet}"
+
+    @staticmethod
+    def _format_live_transcript_prompt_context(text: str) -> str:
+        snippet = SessionRagQueryService._build_snippet(text, limit=320)
+        return f"[live partial transcript] {snippet}"
 
     @staticmethod
     def _format_mmss(milliseconds: int) -> str:

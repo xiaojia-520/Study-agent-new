@@ -24,6 +24,7 @@ def test_serve_asr_commands_reports_worker_status_without_session() -> None:
     serve_asr_commands(
         command_reader=lambda: next(commands),
         emit=events.append,
+        warmup_on_start=False,
     )
 
     assert events[0]["type"] == "worker_status"

@@ -23,6 +23,7 @@ export function createLessonAssetActions(args: {
     assetUploading,
     assetErrorMessage,
   } = args
+  const activeAssetPolls = new Set<string>()
 
   function upsertAsset(asset: LessonAssetItem): void {
     const next = [...assetList.value]
@@ -41,17 +42,26 @@ export function createLessonAssetActions(args: {
   }
 
   async function pollAssetStatus(assetId: string): Promise<void> {
+    if (activeAssetPolls.has(assetId)) {
+      return
+    }
+    activeAssetPolls.add(assetId)
     const startedAt = Date.now()
     const timeoutMs = 10 * 60 * 1000
+    const pollIntervalMs = 10 * 1000
     const finalStatuses = new Set(['done', 'failed', 'indexing_failed'])
 
-    while (Date.now() - startedAt < timeoutMs) {
-      const response = await fetchLessonAsset(assetId, backendBaseUrl.value)
-      upsertAsset(response.item)
-      if (finalStatuses.has(response.item.status)) {
-        return
+    try {
+      while (Date.now() - startedAt < timeoutMs) {
+        const response = await fetchLessonAsset(assetId, backendBaseUrl.value)
+        upsertAsset(response.item)
+        if (finalStatuses.has(response.item.status)) {
+          return
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, pollIntervalMs))
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 3000))
+    } finally {
+      activeAssetPolls.delete(assetId)
     }
   }
 

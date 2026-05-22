@@ -23,6 +23,7 @@ class SessionQueryRequest(BaseModel):
     include_rag_context: bool = False
     classroom_context_mode: ClassroomContextMode = ClassroomContextMode.SESSION
     asset_ids: list[str] = Field(default_factory=list)
+    live_transcript: str | None = None
 
 
 class SessionSummaryRequest(BaseModel):

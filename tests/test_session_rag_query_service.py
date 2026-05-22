@@ -564,6 +564,64 @@ class SessionRagQueryServiceTests(unittest.TestCase):
         self.assertIn("region=blackboard", prompt)
         self.assertIn("Transcript 31", prompt)
 
+    def test_query_session_direct_llm_prompt_includes_live_partial_transcript(self) -> None:
+        fake_query_service = FakeQueryService([])
+        fake_llm = FakeLLM("The teacher is defining mappings.")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [self._transcript_item(chunk_id=1, text="old finalized text")],
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="What is the teacher saying now?",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+            live_transcript="映射要满足每个 x 有唯一的 y 与之对应",
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertTrue(answer.metadata["live_transcript_included"])
+        self.assertIn("status=partial", prompt)
+        self.assertIn("映射要满足每个 x 有唯一的 y 与之对应", prompt)
+
+    def test_query_session_rag_prompt_includes_live_partial_transcript(self) -> None:
+        fake_query_service = FakeQueryService([])
+        fake_llm = FakeLLM("这段正在讲映射的唯一对应关系。")
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(top_k=5),
+            embed_model=object(),
+            llm=fake_llm,
+            query_service=fake_query_service,
+        )
+        service = SessionRagQueryService(
+            runtime_factory=lambda: runtime,
+            session_getter=lambda _: self._session(),
+            transcript_loader=lambda session, session_id: [],
+        )
+
+        answer = service.query_session(
+            session_id="session-a",
+            query_text="现在讲到哪里了？",
+            scope=QueryScope.CURRENT_LESSON,
+            with_llm=True,
+            include_rag_context=True,
+            live_transcript="老师正在说值域是目标集合的子集",
+        )
+
+        prompt = fake_llm.prompts[0]
+        self.assertEqual(answer.metadata["answer_strategy"], "llm_rag_synthesized")
+        self.assertEqual(answer.metadata["recent_speech_transcript_count"], 1)
+        self.assertIn("[live partial transcript]", prompt)
+        self.assertIn("老师正在说值域是目标集合的子集", prompt)
+
     def test_query_session_history_mode_uses_lesson_retrieval_without_recent_window_for_general_question(self) -> None:
         fake_query_service = FakeQueryService(
             [

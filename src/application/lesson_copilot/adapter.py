@@ -53,6 +53,28 @@ class LessonCopilotAdapter:
         )
         return self.lesson_note_to_dict(note)
 
+    def delete_lesson_note(self, course_id: str, lesson_id: str, *, note_id: str | None = None) -> dict[str, Any]:
+        if note_id:
+            deleted = self.lesson_note_service.delete_note(note_id)
+        else:
+            deleted = self.lesson_note_service.delete_latest_note(course_id=course_id, lesson_id=lesson_id)
+        if deleted is None:
+            return {
+                "deleted": False,
+                "course_id": course_id,
+                "lesson_id": lesson_id,
+                "note_id": note_id,
+                "error_message": "lesson note not found",
+            }
+        return {
+            "deleted": True,
+            "note_id": deleted.note_id,
+            "course_id": deleted.course_id,
+            "lesson_id": deleted.lesson_id,
+            "title": deleted.title,
+            "status": deleted.status.value,
+        }
+
     def get_lesson_transcripts(self, course_id: str, lesson_id: str, *, limit: int = 12) -> dict[str, Any]:
         items = self.transcript_service.list_lesson_transcripts(course_id=course_id, lesson_id=lesson_id)
         return {
@@ -113,6 +135,46 @@ class LessonCopilotAdapter:
                 }
             )
         return {"count": len(items), "items": compact}
+
+    def search_available_assets(self, *, query: str | None = None, limit: int = 6) -> dict[str, Any]:
+        all_items = [item for item in self.lesson_asset_service.list_assets(limit=100) if item.status == "done"]
+        terms = [term for term in str(query or "").lower().split() if term]
+        scored_items = []
+        for item in all_items:
+            haystack = " ".join(
+                str(value or "")
+                for value in (
+                    item.file_name,
+                    item.subject,
+                    item.metadata.get("original_file_name"),
+                    item.metadata.get("source_file_name"),
+                )
+            ).lower()
+            score = sum(1 for term in terms if term in haystack) if terms else 0
+            if terms and score <= 0:
+                continue
+            scored_items.append((score, item))
+        scored_items.sort(key=lambda pair: (pair[0], pair[1].updated_at), reverse=True)
+        selected = [item for _, item in scored_items[: max(1, int(limit))]]
+        return {
+            "query": query,
+            "count": len(selected),
+            "total_available_count": len(all_items),
+            "items": [
+                {
+                    "asset_id": item.asset_id,
+                    "status": item.status,
+                    "file_name": item.file_name,
+                    "subject": item.subject,
+                    "media_type": item.media_type,
+                    "record_count": item.record_count,
+                    "library_asset": bool(item.metadata.get("library_asset")),
+                    "created_at": item.created_at,
+                    "updated_at": item.updated_at,
+                }
+                for item in selected
+            ],
+        }
 
     def get_lesson_messages(self, course_id: str, lesson_id: str, *, limit: int = 10) -> dict[str, Any]:
         items = self.chat_memory_service.list_lesson_messages(
@@ -187,6 +249,7 @@ class LessonCopilotAdapter:
         scope: str = "current_lesson",
         top_k: int = 5,
         with_llm: bool = False,
+        asset_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized_session_id = self._require_session_id(session_id)
         answer = self.session_rag_query_service.query_session(
@@ -197,6 +260,7 @@ class LessonCopilotAdapter:
             with_llm=bool(with_llm),
             include_rag_context=False,
             classroom_context_mode=self.ClassroomContextMode.LESSON,
+            asset_ids=asset_ids,
         )
         return {
             "query": answer.query,
@@ -208,6 +272,7 @@ class LessonCopilotAdapter:
                     "score": item.score,
                     "source_type": item.source_type,
                     "session_id": item.session_id,
+                    "metadata": dict(item.metadata),
                 }
                 for item in answer.results[:5]
             ],

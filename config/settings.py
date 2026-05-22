@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         "paraformer-zh-streaming-2pass": "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
     }
     ASR_DEVICE: str = "auto"
-    ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh-streaming"
+    ASR_DEFAULT_MODEL_KEY: str = "paraformer-zh-streaming-2pass"
     ASR_OFFLINE_MODEL_KEY: str = "paraformer-zh"
     ASR_WARMUP_OFFLINE_MODEL: bool = True
     ASR_INFERENCE_MAX_CONCURRENCY: int = 1
@@ -85,7 +85,8 @@ class Settings(BaseSettings):
     OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False
     OCR_USE_DOC_UNWARPING: bool = False
     OCR_USE_TEXTLINE_ORIENTATION: bool = False
-    VLM_MODEL_NAME: Path = VLM_MODEL_DIR / "Qwen2.5-VL-7B-Instruct"
+    VLM_MODEL_NAME: Path = VLM_MODEL_DIR / "Qwen2.5-VL-3B-Instruct"
+    VLM_TORCH_DTYPE: str = "auto"
     VLM_DEVICE_MAP: str = "auto"
     VLM_MAX_NEW_TOKENS: int = 512
     YOLO_MODEL_NAME: Path = YOLO_MODEL_DIR / "yolo11s.pt"
@@ -122,7 +123,7 @@ class Settings(BaseSettings):
     RAG_LLM_MAX_TOKENS: int | None = None
     RAG_LLM_TIMEOUT: float = 60.0
 
-    MINERU_API_TOKEN: str = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI1NDEwMDMzNSIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3ODk3Nzg3NCwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiOGI5M2E2MWUtZWMwYi00MWVjLWIxZTQtZjY3ZjJhOGE5MTJjIiwiZW1haWwiOiIiLCJleHAiOjE3ODY3NTM4NzR9.QFjfmPfVQSPkambo5Fgz9JLm0uzngSuHEnJEPBcm-ll4urgL5GarZrpFL9p6Q4PiCiZDZ-DACpVpclPJGzhDFw"
+    MINERU_API_TOKEN: str = ""
     MINERU_BASE_URL: str = "https://mineru.net"
     MINERU_MODEL_VERSION: str = "vlm"
     MINERU_LANGUAGE: str = "ch"

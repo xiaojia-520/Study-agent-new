@@ -210,7 +210,7 @@ POST /lessons/{course_id}/{lesson_id}/notes/generate
 - 标点：CT-Transformer
 - Embedding：`BAAI/bge-small-zh-v1.5`
 - OCR：PaddleOCR
-- VLM：`Qwen/Qwen2.5-VL-7B-Instruct`
+- VLM：`Qwen/Qwen2.5-VL-3B-Instruct-AWQ`
 - 目标检测：YOLO11
 - 文档解析：MinerU
 
@@ -387,7 +387,7 @@ python scripts/setup_models.py
 - Punctuation：`punc_ct-transformer_cn-en-common-vocab471067-large`
 - YOLO：`yolo11s.pt`
 - PaddleOCR det / rec
-- Qwen2.5-VL-7B-Instruct
+- Qwen2.5-VL-3B-Instruct-AWQ
 
 注意：
 
@@ -445,7 +445,7 @@ RAG_LLM_API_BASE=https://api.deepseek.com
 RAG_LLM_TEMPERATURE=0.1
 RAG_LLM_MAX_TOKENS=512
 
-# MinerU（资料解析）
+# MinerU（资料解析，在 `config/.env` 中配置）
 MINERU_API_TOKEN=your_mineru_token
 MINERU_MODEL_VERSION=vlm
 MINERU_LANGUAGE=ch
